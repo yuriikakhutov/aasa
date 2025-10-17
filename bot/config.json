@@ -1,0 +1,13 @@
+{
+  "aggression": 0.65,
+  "retreatHpThreshold": 0.25,
+  "healHpThreshold": 0.5,
+  "healManaThreshold": 0.35,
+  "farmSearchRadius": 1600,
+  "roamSearchRadius": 2200,
+  "fightEngageThreshold": 0.58,
+  "pushWaveRange": 2800,
+  "logLevel": "INFO",
+  "logLimitPerTick": 12,
+  "debug": false
+}
