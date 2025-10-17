@@ -1,32 +1,12 @@
 local json = require("integration.json")
+local util = require("integration.util")
 
 local DEFAULT_CONFIG = {
     aggression = 0.5,
     vision_range = 800,
 }
 
-local function module_dir()
-    local info = debug.getinfo(1, "S")
-    if not info or not info.source then
-        return ""
-    end
-
-    local source = info.source
-    if source:sub(1, 1) == "@" then
-        source = source:sub(2)
-    end
-
-    local dir = source:match("^(.*[/\\])")
-    return dir or ""
-end
-
-local function build_config_path()
-    local dir = module_dir()
-    if dir == "" then
-        return "config.json"
-    end
-    return dir .. "config.json"
-end
+local CONFIG_FILENAME = "config.json"
 
 local function clone_default()
     return {
@@ -36,14 +16,21 @@ local function clone_default()
 end
 
 local function safe_load()
-    local path = build_config_path()
+    local path = util.resolve_path(CONFIG_FILENAME)
     local ok, cfg = pcall(json.load, path)
-    if not ok or type(cfg) ~= "table" then
-        local reason = ok and "invalid config structure" or tostring(cfg)
-        print("[ERROR] Failed to load config.json: " .. tostring(reason))
-        return clone_default()
+    if ok and type(cfg) == "table" then
+        return cfg
     end
-    return cfg
+
+    local reason
+    if ok then
+        reason = string.format("invalid config structure (%s)", path)
+    else
+        reason = string.format("%s (%s)", tostring(cfg), path)
+    end
+
+    print("[ERROR] Failed to load config.json: " .. reason)
+    return clone_default()
 end
 
 return safe_load()
