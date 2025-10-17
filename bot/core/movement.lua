@@ -6,53 +6,66 @@ local log = require("integration.log")
 
 local M = {
     _lastChaseCheck = 0,
-    _lastMovePos = nil,
-    _lastMoveTime = -math.huge,
-    _lastDestination = nil,
 }
+
+local _lastMovePos = nil
+local _lastMoveTime = -math.huge
+local _nextRoamTime = 0
 
 local function manual_override(now)
     if api.isPlayerControlling and api.isPlayerControlling() then
         local untilTime = now + 2
         bb:setUserOverride(untilTime)
+        _nextRoamTime = untilTime
         return true
     end
-    return bb:isUserOverride(now)
-end
-
-local function should_issue_move(pos, now)
-    if not pos then
-        return false
-    end
-    if manual_override(now) then
-        return false
-    end
-    if not M._lastDestination then
-        return true
-    end
-    local distance = util.distance2d(pos, M._lastDestination)
-    if distance > 100 then
-        return true
-    end
-    if (now - (M._lastMoveTime or -math.huge)) > 0.5 then
+    if bb:isUserOverride(now) then
+        if _nextRoamTime < now + 0.1 then
+            _nextRoamTime = now + 0.1
+        end
         return true
     end
     return false
 end
 
+local function has_coordinates(pos)
+    if not pos then
+        return false
+    end
+    return pos.x ~= nil and pos.y ~= nil
+end
+
+local function should_move(now, pos)
+    if not pos or not has_coordinates(pos) then
+        return false
+    end
+    if not _lastMovePos then
+        return true
+    end
+    local ok, distance = pcall(function()
+        return (pos - _lastMovePos):Length2D()
+    end)
+    if not ok then
+        distance = util.distance2d(pos, _lastMovePos)
+    end
+    return distance > 200 and (now - _lastMoveTime) > 0.5
+end
+
 function M.move_to(position)
-    if not position then
+    if not position or not has_coordinates(position) then
         return
     end
     local now = api.time()
-    if not should_issue_move(position, now) then
+    if manual_override(now) then
+        return
+    end
+    if not should_move(now, position) then
         return
     end
     if api.moveTo(position) then
         bb:markMove(now)
-        M._lastMovePos = position
-        M._lastDestination = position
-        M._lastMoveTime = now
+        _lastMovePos = position
+        _lastMoveTime = now
         log.info(string.format("Move → x:%.0f y:%.0f", position.x or 0, position.y or 0))
     end
 end
@@ -152,8 +165,16 @@ function M.farmRoute()
 end
 
 function M.roam()
+    local now = api.time()
+    if manual_override(now) then
+        return
+    end
+    if now < _nextRoamTime then
+        return
+    end
+    _nextRoamTime = now + math.random(5, 9)
     local point = nav.randomSafePos() or nav.nextRoamPoint()
-    if not point then
+    if not point or not has_coordinates(point) then
         return
     end
     M.move_to(point)
