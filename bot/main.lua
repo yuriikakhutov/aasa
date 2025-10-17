@@ -1,3 +1,15 @@
+if type(_G) ~= "table" then
+    local env = _ENV
+    if type(env) ~= "table" then
+        if type(getfenv) == "function" then
+            env = getfenv(0)
+        else
+            env = {}
+        end
+    end
+    _G = env
+end
+
 local hooks = require("integration.hooks")
 local events = require("core.events")
 local perception = require("core.perception")
