@@ -15,6 +15,21 @@ local function safe_call(func, ...)
     return result
 end
 
+local function safe_library_call(library, method_name, ...)
+    if type(library) ~= "table" or not method_name then
+        return false, nil
+    end
+    local method = library[method_name]
+    if type(method) ~= "function" then
+        return false, nil
+    end
+    local ok, result = pcall(method, ...)
+    if not ok then
+        return false, nil
+    end
+    return true, result
+end
+
 local function ensure_player()
     if M._player and Entity.IsEntity and Entity.IsEntity(M._player) then
         return M._player
@@ -455,43 +470,100 @@ end
 -- === Safe ability/item iteration API (required by perception & combat) ===
 function M.iterate_abilities(entity)
     local result = {}
-    if not entity or not entity.GetAbilityCount then
+
+    if type(entity) ~= "userdata" and type(entity) ~= "table" then
         return result
     end
 
-    local count = entity:GetAbilityCount()
-    for i = 0, (count or 0) - 1 do
-        local ability = entity:GetAbilityByIndex(i)
-        if ability and ability.GetName then
-            table.insert(result, {
-                name = ability:GetName(),
-                isReady = ability.IsFullyCastable and ability:IsFullyCastable() or false,
-                cooldown = ability.GetCooldownTimeRemaining and ability:GetCooldownTimeRemaining() or 0,
-                level = ability.GetLevel and ability:GetLevel() or 0,
-                isPassive = ability.IsPassive and ability:IsPassive() or false,
-                castRange = ability.GetCastRange and ability:GetCastRange() or 0,
-                manaCost = ability.GetManaCost and ability:GetManaCost() or 0,
-            })
+    local has_count, count = safe_library_call(NPC, "GetAbilityCount", entity)
+    if not has_count or not count or count <= 0 then
+        return result
+    end
+
+    for i = 0, count - 1 do
+        local ok_ability, ability = safe_library_call(NPC, "GetAbilityByIndex", entity, i)
+        if ok_ability and (type(ability) == "userdata" or type(ability) == "table") then
+            local data = {}
+
+            data.handle = ability
+
+            local ok_name, name = safe_library_call(Ability, "GetName", ability)
+            data.name = ok_name and name or ""
+
+            local ok_ready, ready = safe_library_call(Ability, "IsReady", ability)
+            if not ok_ready then
+                local ok_fully, fully = safe_library_call(Ability, "IsFullyCastable", ability)
+                ok_ready, ready = ok_fully, fully
+            end
+            data.isReady = ok_ready and ready or false
+
+            local ok_cooldown, cooldown = safe_library_call(Ability, "GetCooldownTimeRemaining", ability)
+            if not ok_cooldown then
+                ok_cooldown, cooldown = safe_library_call(Ability, "GetCooldownTimeLeft", ability)
+            end
+            data.cooldown = ok_cooldown and cooldown or 0
+
+            local ok_level, level = safe_library_call(Ability, "GetLevel", ability)
+            data.level = ok_level and level or 0
+
+            local ok_passive, passive = safe_library_call(Ability, "IsPassive", ability)
+            data.isPassive = ok_passive and passive or false
+
+            local ok_range, range = safe_library_call(Ability, "GetCastRange", ability, entity)
+            if not ok_range then
+                ok_range, range = safe_library_call(Ability, "GetCastRange", ability)
+            end
+            data.castRange = ok_range and range or 0
+
+            local ok_cost, cost = safe_library_call(Ability, "GetManaCost", ability, data.level)
+            if not ok_cost then
+                ok_cost, cost = safe_library_call(Ability, "GetManaCost", ability)
+            end
+            data.manaCost = ok_cost and cost or 0
+
+            table.insert(result, data)
         end
     end
+
+    -- if #result == 0 then
+    --     print("[DEBUG] iterate_abilities: no valid abilities found for entity")
+    -- end
+
     return result
 end
 
 function M.iterate_items(entity)
     local result = {}
-    if not entity or not entity.GetItemInSlot then
+
+    if type(entity) ~= "userdata" and type(entity) ~= "table" then
         return result
     end
 
     for i = 0, 15 do
-        local item = entity:GetItemInSlot(i)
-        if item and item.GetName then
-            table.insert(result, {
-                name = item:GetName(),
-                isReady = item.IsFullyCastable and item:IsFullyCastable() or false,
-                cooldown = item.GetCooldownTimeRemaining and item:GetCooldownTimeRemaining() or 0,
+        local ok_item, item = safe_library_call(NPC, "GetItemInSlot", entity, i)
+        if ok_item and (type(item) == "userdata" or type(item) == "table") then
+            local data = {
                 slot = i,
-            })
+                handle = item,
+            }
+
+            local ok_name, name = safe_library_call(Ability, "GetName", item)
+            data.name = ok_name and name or ""
+
+            local ok_ready, ready = safe_library_call(Ability, "IsReady", item)
+            if not ok_ready then
+                local ok_fully, fully = safe_library_call(Ability, "IsFullyCastable", item)
+                ok_ready, ready = ok_fully, fully
+            end
+            data.isReady = ok_ready and ready or false
+
+            local ok_cooldown, cooldown = safe_library_call(Ability, "GetCooldownTimeRemaining", item)
+            if not ok_cooldown then
+                ok_cooldown, cooldown = safe_library_call(Ability, "GetCooldownTimeLeft", item)
+            end
+            data.cooldown = ok_cooldown and cooldown or 0
+
+            table.insert(result, data)
         end
     end
     return result

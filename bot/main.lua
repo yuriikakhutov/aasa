@@ -33,18 +33,15 @@ local function on_spawn()
 end
 
 local function on_tick(evt)
-    log.tick(evt.time)
     local now = evt.time or api.time()
+    log.tick(now)
+
     if api.isPlayerControlling and api.isPlayerControlling() then
         bb:setUserOverride(now + 2)
     end
-    perception.scan(evt.dt)
+
     economy.tick(now)
-    local mode = selector.decide(now)
-    if bb:isUserOverride(now) then
-        return
-    end
-    scheduler.run(mode, now)
+    scheduler.tick(now, bb)
 end
 
 events.on("tick", on_tick)

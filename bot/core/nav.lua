@@ -158,6 +158,13 @@ function M.nextRoamPoint()
     return point
 end
 
+function M.get_lane_waypoints(lane)
+    if not lane then
+        return nil
+    end
+    return LANE_PATHS[lane]
+end
+
 function M.pullInfo(campId)
     return PULL_DATA[campId]
 end

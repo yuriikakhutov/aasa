@@ -11,6 +11,7 @@ local M = {
     config = {},
     hero = nil,
     heroData = {},
+    mode = "roam",
     allies = {},
     enemies = {},
     creeps = {},
@@ -48,6 +49,8 @@ local M = {
     lastAttackAt = 0,
     lastMoveAt = 0,
     lastModeTime = 0,
+    visibleEnemies = {},
+    visibleCreeps = {},
     user_override_until = -math.huge,
     nextRuneTime = 0,
     nextStackTime = 0,
@@ -64,6 +67,7 @@ end
 function M:reset()
     self.hero = nil
     self.heroData = {}
+    self.mode = "roam"
     self.allies = {}
     self.enemies = {}
     self.creeps = {}
@@ -99,6 +103,8 @@ function M:reset()
     self.lastAttackAt = 0
     self.lastMoveAt = 0
     self.lastModeTime = 0
+    self.visibleEnemies = {}
+    self.visibleCreeps = {}
     self.user_override_until = -math.huge
     self.nextRuneTime = 0
     self.nextStackTime = 0
@@ -449,6 +455,7 @@ function M:setMode(mode, time)
     if not mode then
         return
     end
+    self.mode = mode
     self.events.lastMode = mode
     self.lastModeTime = time or self.lastModeTime
 end

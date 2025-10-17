@@ -225,53 +225,83 @@ local function build_enemy_hints(enemies)
     return hints
 end
 
-function M.scan(dt)
+function M.scan(now, board)
+    local state = board or bb
+    state.visibleEnemies = {}
+    state.visibleCreeps = {}
+
     local hero = api.self()
     if not hero then
+        state.hero = nil
+        state.heroData = {}
+        state.hpRatio = 0
+        state.manaRatio = 0
         return
     end
+
     if not Entity.IsAlive(hero) then
-        bb:reset()
+        if state.reset then
+            state:reset()
+        else
+            state.hero = nil
+            state.heroData = {}
+            state.hpRatio = 0
+            state.manaRatio = 0
+        end
         return
     end
-    bb:decayDanger()
+
+    if state.decayDanger then
+        state:decayDanger()
+    end
+
     local heroInfo = collect_hero_info(hero)
-    bb:updateHero(heroInfo)
+    state:updateHero(heroInfo)
+
     local allies, enemies = collect_heroes(hero)
-    local creeps = collect_creeps(hero, Entity.GetTeamNum(hero), bb.config.farmSearchRadius or 1600)
+    local creeps = collect_creeps(hero, Entity.GetTeamNum(hero), state.config.farmSearchRadius or 1600)
     local neutrals = {}
     local structures = {}
-    bb:updateUnits(allies, enemies, creeps, neutrals, structures)
+    state:updateUnits(allies, enemies, creeps, neutrals, structures)
+
     for _, enemy in ipairs(enemies) do
         if enemy.position then
-            bb:updateDangerAt(enemy.position, 1.0)
+            state:updateDangerAt(enemy.position, 1.0)
+        end
+        if enemy.isVisible ~= false then
+            table.insert(state.visibleEnemies, enemy)
         end
     end
+
     for _, creep in ipairs(creeps) do
         if creep.entity then
-            bb:updateFarmScore("creep_" .. tostring(Entity.GetIndex(creep.entity)), creep.position, creep.bounty)
+            state:updateFarmScore("creep_" .. tostring(Entity.GetIndex(creep.entity)), creep.position, creep.bounty)
         end
+        table.insert(state.visibleCreeps, creep)
     end
+
     local friendlyWave, enemyWave = evaluate_waves(heroInfo, enemies, creeps)
-    bb:updateCreepPressure(friendlyWave, enemyWave)
+    state:updateCreepPressure(friendlyWave, enemyWave)
+
     local threatScore, winChance, safe = threat.evaluate(heroInfo, allies, enemies)
-    bb:updateThreat(threatScore, winChance, safe)
+    state:updateThreat(threatScore, winChance, safe)
+
     local hints = build_enemy_hints(enemies)
     local changed = false
     for k, v in pairs(hints) do
-        if not bb.enemyHints or bb.enemyHints[k] ~= v then
+        if not state.enemyHints or state.enemyHints[k] ~= v then
             changed = true
             break
         end
     end
-    bb.enemyHints = hints
+    state.enemyHints = hints
     if changed then
-        economy.planBuild(bb.role or "carry", hints)
+        economy.planBuild(state.role or "carry", hints)
     end
-    if not bb.laneAssignment then
+    if not state.laneAssignment then
         laning.assign()
     end
-    bb.debugData.threat = {
+    state.debugData.threat = {
         score = threatScore,
         win = winChance,
         safe = safe,

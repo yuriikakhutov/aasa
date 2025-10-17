@@ -1,161 +1,118 @@
-local behaviors = require("ai.behaviors")
-local tactics = require("ai.tactics")
 local movement = require("core.movement")
 local combat = require("core.combat")
-local items = require("core.items")
+local util = require("core.util")
 local bb = require("core.blackboard")
 local api = require("integration.uc_api")
 local nav = require("core.nav")
-local economy = require("core.economy")
-local objective = require("core.objective")
-local laning = require("core.laning")
+local navLow = require("integration.nav")
 local log = require("integration.log")
 
 local M = {}
 
-local function use_heal()
-    if not bb.heroData or not bb.heroData.items then
-        return
+local function hero_position()
+    local hero = api.self()
+    if not hero or not Entity.GetAbsOrigin then
+        return nil, hero
     end
-    local priority = { "item_magic_wand", "item_magic_stick", "item_holy_locket", "item_mekansm", "item_guardian_greaves", "item_bloodstone" }
-    for _, name in ipairs(priority) do
-        local item = bb:getItem(name)
-        if item and Ability.IsReady(item.handle or item) then
-            items.cast_item(item, api.self())
-            return
+    return Entity.GetAbsOrigin(hero), hero
+end
+
+local function nearest_entry(entries, reference)
+    if not entries or #entries == 0 or not reference then
+        return nil
+    end
+    local best, bestDist
+    for _, entry in ipairs(entries) do
+        local entity = entry.entity or entry
+        if entity and api.isAlive(entity) then
+            local pos = entry.position
+            if not pos and Entity.GetAbsOrigin then
+                pos = Entity.GetAbsOrigin(entity)
+            end
+            if pos then
+                local dist = util.distance2d(reference, pos)
+                if not bestDist or dist < bestDist then
+                    best = entry
+                    bestDist = dist
+                end
+            end
         end
     end
+    return best
 end
 
-local handlers = {}
-
-handlers.retreat = function(intent)
-    use_heal()
-    movement.safe_retreat()
-end
-
-handlers.fight = function(intent)
-    local target = intent and intent.target or tactics.select_fight_target()
-    if intent and intent.priorityTarget then
-        target = intent.priorityTarget
+local function handle_fight(state)
+    local pos, hero = hero_position()
+    if not hero then
+        return
     end
+    local targetInfo = nearest_entry(state.visibleEnemies, pos)
+    local target = targetInfo and (targetInfo.entity or targetInfo)
     if not target then
+        movement.roam(api.time(), state)
         return
     end
-    if intent and intent.commit then
-        combat.execute(target)
+    log.info("Combat: engaging enemy target")
+    combat.execute(target)
+    movement.chaseAggressive(target)
+end
+
+local function handle_farm(state)
+    local pos, hero = hero_position()
+    if not hero then
+        return
+    end
+    local creepInfo = nearest_entry(state.visibleCreeps, pos)
+    local creep = creepInfo and (creepInfo.entity or creepInfo)
+    if not creep then
+        movement.roam(api.time(), state)
+        return
+    end
+    log.info("Farm: attacking nearest creep")
+    if combat.finishSecure then
+        combat.finishSecure(creep)
+    end
+    movement.attack(creep)
+end
+
+local function handle_roam(state)
+    movement.roam(api.time(), state)
+end
+
+local function handle_retreat(state)
+    local _, hero = hero_position()
+    if not hero then
+        return
+    end
+    local team = Entity.GetTeamNum(hero)
+    local fountain = navLow.get_fountain(team)
+    if fountain then
+        movement.move_to(fountain)
     else
-        combat.harass(target)
-    end
-end
-
-handlers.gank = function(intent)
-    local target = intent and intent.target or tactics.select_gank_target()
-    if target then
-        combat.execute(target)
-    end
-end
-
-handlers.push = function(intent)
-    objective.pushLane(intent and intent.lane)
-end
-
-handlers.defend = function(intent)
-    if not objective.defendTower() and intent and intent.position then
-        movement.move_to(intent.position)
-    end
-end
-
-handlers.farm = function(intent)
-    local target = intent and intent.target or tactics.farm_target()
-    if target then
-        combat.finishSecure(target)
-        api.attack(target)
-    else
-        movement.farmRoute()
-    end
-end
-
-handlers.roam = function(intent)
-    if intent and intent.position then
-        movement.move_to(intent.position)
-    else
-        movement.roam()
-    end
-end
-
-handlers.stack = function(intent)
-    local data = intent and intent.data or laning.stackOpportunity(api.time())
-    if data and data.approach then
-        movement.move_to(data.approach)
-    else
-        movement.move_to(nav.nextRoamPoint())
-    end
-end
-
-handlers.pull = function(intent)
-    local data = intent and intent.data or laning.pullOpportunity(api.time())
-    if data and data.approach then
-        movement.move_to(data.approach)
-    else
-        movement.move_to(nav.nextRoamPoint())
-    end
-end
-
-handlers.rune = function(intent)
-    local spot = intent and intent.spot
-    if not spot then
-        spot = select(1, laning.runeWindow(api.time()))
-    end
-    if spot then
-        movement.move_to(spot)
-    end
-end
-
-handlers.shop = function(intent)
-    economy.tick(api.time())
-    local shopPos = nav.nearestShopPos()
-    movement.move_to(shopPos or nav.nextRoamPoint())
-end
-
-handlers.heal = function(intent)
-    use_heal()
-    movement.safe_retreat()
-end
-
-handlers.objective = function(intent)
-    if intent and intent.objective == "roshan" then
-        objective.roshan()
-    else
-        if not objective.pushLane(intent and intent.lane) then
-            objective.defendTower()
+        local safe = nav.safeRetreat()
+        if safe then
+            movement.move_to(safe)
         end
     end
 end
 
-handlers.stackpull = function(intent)
-    handlers.stack(intent)
-    handlers.pull(intent)
-end
+function M.execute(now, board)
+    local state = board or bb
+    state.mode = state.mode or "roam"
 
-local function run_handler(mode, intent)
-    local handler = handlers[intent and intent.kind or mode]
-    if handler then
-        handler(intent)
-    end
-end
-
-function M.execute(mode)
-    laning.prepareRotation(api.time())
-    local behavior = behaviors[mode]
-    if not behavior then
+    if state.mode == "fight" then
+        handle_fight(state)
         return
     end
-    local intent = behavior()
-    if not intent then
+    if state.mode == "farm" then
+        handle_farm(state)
         return
     end
-    run_handler(mode, intent)
+    if state.mode == "retreat" then
+        handle_retreat(state)
+        return
+    end
+    handle_roam(state)
 end
 
 return M

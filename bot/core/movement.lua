@@ -6,53 +6,88 @@ local log = require("integration.log")
 
 local M = {
     _lastChaseCheck = 0,
-    _lastMovePos = nil,
-    _lastMoveTime = -math.huge,
-    _lastDestination = nil,
 }
+
+local _lastMovePos = nil
+local _lastMoveTime = -math.huge
+local _nextRoamTime = 0
+local _laneWaypointIndex = 1
+local _lastLaneUsed = nil
 
 local function manual_override(now)
     if api.isPlayerControlling and api.isPlayerControlling() then
         local untilTime = now + 2
         bb:setUserOverride(untilTime)
+        _nextRoamTime = untilTime
         return true
     end
-    return bb:isUserOverride(now)
-end
-
-local function should_issue_move(pos, now)
-    if not pos then
-        return false
-    end
-    if manual_override(now) then
-        return false
-    end
-    if not M._lastDestination then
-        return true
-    end
-    local distance = util.distance2d(pos, M._lastDestination)
-    if distance > 100 then
-        return true
-    end
-    if (now - (M._lastMoveTime or -math.huge)) > 0.5 then
+    if bb:isUserOverride(now) then
+        if _nextRoamTime < now + 0.1 then
+            _nextRoamTime = now + 0.1
+        end
         return true
     end
     return false
 end
 
+local function has_coordinates(pos)
+    if not pos then
+        return false
+    end
+    return pos.x ~= nil and pos.y ~= nil
+end
+
+local function should_move(now, pos)
+    if not pos or not has_coordinates(pos) then
+        return false
+    end
+    if not _lastMovePos then
+        return true
+    end
+    local ok, distance = pcall(function()
+        return (pos - _lastMovePos):Length2D()
+    end)
+    if not ok then
+        distance = util.distance2d(pos, _lastMovePos)
+    end
+    return distance > 200 and (now - _lastMoveTime) > 0.5
+end
+
+local function next_lane_point(lane)
+    if not lane then
+        return nil
+    end
+    local waypoints = nav.get_lane_waypoints(lane)
+    if not waypoints or #waypoints == 0 then
+        return nil
+    end
+    if lane ~= _lastLaneUsed then
+        _laneWaypointIndex = 1
+        _lastLaneUsed = lane
+    end
+    local point = waypoints[_laneWaypointIndex]
+    _laneWaypointIndex = _laneWaypointIndex + 1
+    if _laneWaypointIndex > #waypoints then
+        _laneWaypointIndex = 1
+    end
+    return point
+end
+
 function M.move_to(position)
-    if not position then
+    if not position or not has_coordinates(position) then
         return
     end
     local now = api.time()
-    if not should_issue_move(position, now) then
+    if manual_override(now) then
+        return
+    end
+    if not should_move(now, position) then
         return
     end
     if api.moveTo(position) then
         bb:markMove(now)
-        M._lastMovePos = position
-        M._lastDestination = position
-        M._lastMoveTime = now
+        _lastMovePos = position
+        _lastMoveTime = now
         log.info(string.format("Move → x:%.0f y:%.0f", position.x or 0, position.y or 0))
     end
 end
@@ -151,12 +186,48 @@ function M.farmRoute()
     M.roam()
 end
 
-function M.roam()
-    local point = nav.randomSafePos() or nav.nextRoamPoint()
-    if not point then
+function M.roam(now, board)
+    local currentTime = now or api.time()
+    local state = board or bb
+    if manual_override(currentTime) then
         return
     end
+    if currentTime < _nextRoamTime then
+        return
+    end
+    _nextRoamTime = currentTime + math.random(5, 10)
+
+    local point = nil
+    if state and state.laneAssignment then
+        point = next_lane_point(state.laneAssignment)
+    end
+    if not point then
+        point = nav.randomSafePos() or nav.nextRoamPoint()
+    end
+    if not point or not has_coordinates(point) then
+        return
+    end
+    log.info(string.format("Roam: moving to new point (%.0f, %.0f)", point.x or 0, point.y or 0))
     M.move_to(point)
+end
+
+function M.update(now, board)
+    local state = board or bb
+    local currentTime = now or api.time()
+    local mode = state and state.mode or "roam"
+
+    if mode == "roam" then
+        M.roam(currentTime, state)
+        return
+    end
+
+    if mode == "retreat" then
+        local retreatPos = nav.safeRetreat()
+        if retreatPos then
+            M.move_to(retreatPos)
+        end
+        return
+    end
 end
 
 return M

@@ -1,32 +1,23 @@
+local perception = require("core.perception")
+local selector = require("core.selector")
 local actions = require("core.actions")
-local util = require("core.util")
+local movement = require("core.movement")
+local bb = require("core.blackboard")
+local api = require("integration.uc_api")
 
-local M = {
-    lastCommand = {
-        key = nil,
-        time = -math.huge,
-    },
-    cooldown = 0.12,
-}
+local M = {}
 
-local function throttled(key, time)
-    if M.lastCommand.key == key and (time - M.lastCommand.time) < M.cooldown then
-        return true
-    end
-    M.lastCommand.key = key
-    M.lastCommand.time = time
-    return false
-end
+function M.tick(now, board)
+    local currentTime = now or api.time()
+    local state = board or bb
 
-function M.run(mode, time)
-    time = time or 0
-    if not mode then
-        return
-    end
-    if throttled(mode, time) then
-        return
-    end
-    util.safe_call(actions.execute, mode)
+    perception.scan(currentTime, state)
+
+    local mode = selector.decide(currentTime, state)
+    state.mode = mode
+
+    actions.execute(currentTime, state)
+    movement.update(currentTime, state)
 end
 
 return M
