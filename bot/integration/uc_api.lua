@@ -455,25 +455,71 @@ end
 -- === Safe ability/item iteration API (required by perception & combat) ===
 function M.iterate_abilities(entity)
     local result = {}
-    if not entity or not entity.GetAbilityCount then
+
+    if type(entity) ~= "userdata" and type(entity) ~= "table" then
         return result
     end
 
-    local count = entity:GetAbilityCount()
-    for i = 0, (count or 0) - 1 do
-        local ability = entity:GetAbilityByIndex(i)
-        if ability and ability.GetName then
-            table.insert(result, {
-                name = ability:GetName(),
-                isReady = ability.IsFullyCastable and ability:IsFullyCastable() or false,
-                cooldown = ability.GetCooldownTimeRemaining and ability:GetCooldownTimeRemaining() or 0,
-                level = ability.GetLevel and ability:GetLevel() or 0,
-                isPassive = ability.IsPassive and ability:IsPassive() or false,
-                castRange = ability.GetCastRange and ability:GetCastRange() or 0,
-                manaCost = ability.GetManaCost and ability:GetManaCost() or 0,
-            })
+    local ok, count = pcall(function()
+        return entity.GetAbilityCount and entity:GetAbilityCount() or 0
+    end)
+    if not ok or not count or count <= 0 then
+        return result
+    end
+
+    for i = 0, count - 1 do
+        local ok2, ability = pcall(function()
+            return entity:GetAbilityByIndex(i)
+        end)
+
+        if ok2 and ability and ability.GetName then
+            local data = {}
+
+            local okn, name = pcall(function()
+                return ability:GetName()
+            end)
+            if okn then
+                data.name = name
+            end
+
+            local okr, ready = pcall(function()
+                return ability:IsFullyCastable()
+            end)
+            data.isReady = okr and ready or false
+
+            local okc, cd = pcall(function()
+                return ability:GetCooldownTimeRemaining()
+            end)
+            data.cooldown = okc and cd or 0
+
+            local okl, lvl = pcall(function()
+                return ability:GetLevel()
+            end)
+            data.level = okl and lvl or 0
+
+            local okp, passive = pcall(function()
+                return ability:IsPassive()
+            end)
+            data.isPassive = okp and passive or false
+
+            local okr2, range = pcall(function()
+                return ability:GetCastRange()
+            end)
+            data.castRange = okr2 and range or 0
+
+            local okm, cost = pcall(function()
+                return ability:GetManaCost()
+            end)
+            data.manaCost = okm and cost or 0
+
+            table.insert(result, data)
         end
     end
+
+    -- if #result == 0 then
+    --     print("[DEBUG] iterate_abilities: no valid abilities found for entity")
+    -- end
+
     return result
 end
 
