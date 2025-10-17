@@ -1,5 +1,231 @@
 local Log = Log or { Write = function(msg) print(tostring(msg)) end }
 
+local fallbackVectorMt
+
+if type(_G.Vector) ~= "function" then
+    local function component(tbl, key, index)
+        if type(tbl) ~= "table" then
+            return 0
+        end
+        local value = tbl[key]
+        if value == nil and index then
+            value = tbl[index]
+        end
+        if type(value) == "number" then
+            return value
+        end
+        return 0
+    end
+
+    local function fallback_components(vec)
+        if type(vec) ~= "table" then
+            return 0, 0, 0
+        end
+        return component(vec, "x", 1), component(vec, "y", 2), component(vec, "z", 3)
+    end
+
+    local function fallback_vector(x, y, z)
+        return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, fallbackVectorMt)
+    end
+
+    local function fallback_add(a, b)
+        local ax, ay, az = fallback_components(a)
+        local bx, by, bz = fallback_components(b)
+        return fallback_vector(ax + bx, ay + by, az + bz)
+    end
+
+    local function fallback_sub(a, b)
+        local ax, ay, az = fallback_components(a)
+        local bx, by, bz = fallback_components(b)
+        return fallback_vector(ax - bx, ay - by, az - bz)
+    end
+
+    local function fallback_scale(v, scalar)
+        local x, y, z = fallback_components(v)
+        return fallback_vector(x * scalar, y * scalar, z * scalar)
+    end
+
+    local function fallback_length(v)
+        local x, y, z = fallback_components(v)
+        return math.sqrt(x * x + y * y + z * z)
+    end
+
+    local function fallback_length2d(v)
+        local x, y = fallback_components(v)
+        return math.sqrt(x * x + y * y)
+    end
+
+    fallbackVectorMt = {
+        __add = fallback_add,
+        __sub = fallback_sub,
+        __mul = function(a, b)
+            if type(a) == "number" then
+                return fallback_scale(b, a)
+            elseif type(b) == "number" then
+                return fallback_scale(a, b)
+            end
+            return fallback_vector(0, 0, 0)
+        end,
+        __tostring = function(v)
+            local x, y, z = fallback_components(v)
+            return string.format("Vector(%.1f, %.1f, %.1f)", x, y, z)
+        end,
+    }
+
+    fallbackVectorMt.__index = {
+        Length = fallback_length,
+        Length2D = fallback_length2d,
+        Distance = function(self, other)
+            return fallback_length(fallback_sub(self, other))
+        end,
+        Distance2D = function(self, other)
+            return fallback_length2d(fallback_sub(self, other))
+        end,
+        Normalized = function(self)
+            local len = fallback_length(self)
+            if len == 0 then
+                return fallback_vector(0, 0, 0)
+            end
+            local x, y, z = fallback_components(self)
+            return fallback_vector(x / len, y / len, z / len)
+        end,
+        Clone = function(self)
+            local x, y, z = fallback_components(self)
+            return fallback_vector(x, y, z)
+        end,
+    }
+
+    _G.Vector = function(x, y, z)
+        return fallback_vector(x, y, z)
+    end
+end
+
+local function safe_component(obj, key)
+    local ok, value = pcall(function()
+        local field = obj[key]
+        if type(field) == "function" then
+            return field(obj)
+        end
+        return field
+    end)
+    if ok and type(value) == "number" then
+        return value
+    end
+    local methodName = "Get" .. string.upper(key)
+    local okMethod, method = pcall(function()
+        return obj[methodName]
+    end)
+    if okMethod and type(method) == "function" then
+        local okCall, result = pcall(method, obj)
+        if okCall and type(result) == "number" then
+            return result
+        end
+    end
+    return nil
+end
+
+local function vector_components(vec)
+    if vec == nil then
+        return 0, 0, 0
+    end
+    local t = type(vec)
+    if t == "table" then
+        local x = vec.x
+        local y = vec.y
+        local z = vec.z
+        if x == nil then
+            x = vec[1]
+        end
+        if y == nil then
+            y = vec[2]
+        end
+        if z == nil then
+            z = vec[3]
+        end
+        return x or 0, y or 0, z or 0
+    elseif t == "userdata" then
+        local x = safe_component(vec, "x")
+        local y = safe_component(vec, "y")
+        local z = safe_component(vec, "z")
+        return x or 0, y or 0, z or 0
+    end
+    return 0, 0, 0
+end
+
+local function make_vector(x, y, z)
+    local ok, result = pcall(Vector, x or 0, y or 0, z or 0)
+    if ok and result ~= nil then
+        return result
+    end
+    return { x = x or 0, y = y or 0, z = z or 0 }
+end
+
+local function ensure_vector(v)
+    if v == nil then
+        return make_vector(0, 0, 0)
+    end
+    local t = type(v)
+    if t == "userdata" then
+        return v
+    elseif t == "table" then
+        local mt = getmetatable(v)
+        if mt ~= nil then
+            return v
+        end
+        local x, y, z = vector_components(v)
+        return make_vector(x, y, z)
+    end
+    error("expected Vector, got " .. t)
+end
+
+local function try_operator(fn)
+    local ok, result = pcall(fn)
+    if ok then
+        return result
+    end
+    return nil
+end
+
+local function vector_add(a, b)
+    local av = ensure_vector(a)
+    local bv = ensure_vector(b)
+    local result = try_operator(function()
+        return av + bv
+    end)
+    if result ~= nil then
+        return result
+    end
+    local ax, ay, az = vector_components(av)
+    local bx, by, bz = vector_components(bv)
+    return make_vector(ax + bx, ay + by, az + bz)
+end
+
+local function vector_sub(a, b)
+    local av = ensure_vector(a)
+    local bv = ensure_vector(b)
+    local result = try_operator(function()
+        return av - bv
+    end)
+    if result ~= nil then
+        return result
+    end
+    local ax, ay, az = vector_components(av)
+    local bx, by, bz = vector_components(bv)
+    return make_vector(ax - bx, ay - by, az - bz)
+end
+
+local function vector_scale(vec, scalar)
+    local v = ensure_vector(vec)
+    local result = try_operator(function()
+        return v * scalar
+    end)
+    if result ~= nil then
+        return result
+    end
+    local x, y, z = vector_components(v)
+    return make_vector(x * scalar, y * scalar, z * scalar)
+end
+
 local M = {
     config = {
         logLevel = "INFO",
@@ -15,13 +241,6 @@ local M = {
     _lastTickBucket = -1,
     _tickLogCount = 0,
 }
-
-local function ensure_vector(v)
-    if type(v) == "userdata" or type(v) == "table" then
-        return v
-    end
-    error("expected Vector, got " .. type(v))
-end
 
 function M.init(config)
     if type(config) == "table" then
@@ -90,43 +309,59 @@ function M.lerp(a, b, t)
 end
 
 function M.distance(a, b)
-    ensure_vector(a)
-    ensure_vector(b)
-    if a.Distance then
-        return a:Distance(b)
+    local av = ensure_vector(a)
+    local bv = ensure_vector(b)
+    if av and av.Distance then
+        local ok, result = pcall(av.Distance, av, bv)
+        if ok and type(result) == "number" then
+            return result
+        end
     end
-    local dx = (a.x or 0) - (b.x or 0)
-    local dy = (a.y or 0) - (b.y or 0)
-    local dz = (a.z or 0) - (b.z or 0)
+    local ax, ay, az = vector_components(av)
+    local bx, by, bz = vector_components(bv)
+    local dx = ax - bx
+    local dy = ay - by
+    local dz = az - bz
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
 function M.distance2d(a, b)
-    ensure_vector(a)
-    ensure_vector(b)
-    if a.Distance2D then
-        return a:Distance2D(b)
+    local av = ensure_vector(a)
+    local bv = ensure_vector(b)
+    if av and av.Distance2D then
+        local ok, result = pcall(av.Distance2D, av, bv)
+        if ok and type(result) == "number" then
+            return result
+        end
     end
-    local dx = (a.x or 0) - (b.x or 0)
-    local dy = (a.y or 0) - (b.y or 0)
+    local ax, ay = vector_components(av)
+    local bx, by = vector_components(bv)
+    local dx = ax - bx
+    local dy = ay - by
     return math.sqrt(dx * dx + dy * dy)
 end
 
 function M.normalize(vec)
-    ensure_vector(vec)
-    if vec.Normalized then
-        return vec:Normalized()
+    local v = ensure_vector(vec)
+    if v and v.Normalized then
+        local ok, result = pcall(v.Normalized, v)
+        if ok and result ~= nil then
+            return result
+        end
     end
-    local len = math.sqrt((vec.x or 0) ^ 2 + (vec.y or 0) ^ 2 + (vec.z or 0) ^ 2)
-    if len == 0 then
-        return Vector(0, 0, 0)
+    local x, y, z = vector_components(v)
+    local length = math.sqrt(x * x + y * y + z * z)
+    if length == 0 then
+        return make_vector(0, 0, 0)
     end
-    return Vector((vec.x or 0) / len, (vec.y or 0) / len, (vec.z or 0) / len)
+    return make_vector(x / length, y / length, z / length)
 end
 
 function M.project(from, to, distance)
-    local direction = M.normalize(to - from)
-    return from + direction * distance
+    local origin = ensure_vector(from)
+    local target = ensure_vector(to)
+    local direction = M.normalize(vector_sub(target, origin))
+    return vector_add(origin, vector_scale(direction, distance))
 end
 
 function M.shallow_copy(tbl)
@@ -193,5 +428,12 @@ function M.safe_call(func, ...)
     end
     return res
 end
+
+M.make_vector = make_vector
+M.ensure_vector = ensure_vector
+M.vector_add = vector_add
+M.vector_sub = vector_sub
+M.vector_scale = vector_scale
+M.vector_components = vector_components
 
 return M
