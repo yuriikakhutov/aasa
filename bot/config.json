@@ -1,0 +1,18 @@
+{
+  "debug": false,
+  "logLevel": "INFO",
+  "aggression": 0.6,
+  "farmRadius": 1400,
+  "roamRadius": 2200,
+  "retreatHpThreshold": 0.3,
+  "retreatManaThreshold": 0.15,
+  "fightWinChance": 0.55,
+  "healHpThreshold": 0.5,
+  "maxQueuedActions": 6,
+  "logRateLimit": 0.25,
+  "maxLogEntries": 500,
+  "dangerRadius": 1600,
+  "kiteRange": 450,
+  "maxChaseDistance": 1800,
+  "fallbackSafeTime": 4.0
+}
