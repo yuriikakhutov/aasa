@@ -15,6 +15,31 @@ local function safe_call(func, ...)
     return result
 end
 
+local function safe_method_lookup(obj, method_name)
+    if obj == nil or not method_name then
+        return nil
+    end
+    local ok, method = pcall(function()
+        return obj[method_name]
+    end)
+    if not ok or type(method) ~= "function" then
+        return nil
+    end
+    return method
+end
+
+local function safe_method_call(obj, method_name, ...)
+    local method = safe_method_lookup(obj, method_name)
+    if not method then
+        return false, nil
+    end
+    local ok, result = pcall(method, obj, ...)
+    if not ok then
+        return false, nil
+    end
+    return true, result
+end
+
 local function ensure_player()
     if M._player and Entity.IsEntity and Entity.IsEntity(M._player) then
         return M._player
@@ -455,25 +480,54 @@ end
 -- === Safe ability/item iteration API (required by perception & combat) ===
 function M.iterate_abilities(entity)
     local result = {}
-    if not entity or not entity.GetAbilityCount then
+
+    if type(entity) ~= "userdata" and type(entity) ~= "table" then
         return result
     end
 
-    local count = entity:GetAbilityCount()
-    for i = 0, (count or 0) - 1 do
-        local ability = entity:GetAbilityByIndex(i)
-        if ability and ability.GetName then
-            table.insert(result, {
-                name = ability:GetName(),
-                isReady = ability.IsFullyCastable and ability:IsFullyCastable() or false,
-                cooldown = ability.GetCooldownTimeRemaining and ability:GetCooldownTimeRemaining() or 0,
-                level = ability.GetLevel and ability:GetLevel() or 0,
-                isPassive = ability.IsPassive and ability:IsPassive() or false,
-                castRange = ability.GetCastRange and ability:GetCastRange() or 0,
-                manaCost = ability.GetManaCost and ability:GetManaCost() or 0,
-            })
+    local has_count, count = safe_method_call(entity, "GetAbilityCount")
+    if not has_count or not count or count <= 0 then
+        return result
+    end
+
+    for i = 0, count - 1 do
+        local ok_ability, ability = safe_method_call(entity, "GetAbilityByIndex", i)
+        if ok_ability and (type(ability) == "userdata" or type(ability) == "table") then
+            local data = {}
+
+            local ok_name, name = safe_method_call(ability, "GetName")
+            if ok_name and name ~= nil then
+                data.name = name
+            else
+                data.name = ""
+            end
+
+            local ok_ready, ready = safe_method_call(ability, "IsFullyCastable")
+            data.isReady = ok_ready and ready or false
+
+            local ok_cooldown, cooldown = safe_method_call(ability, "GetCooldownTimeRemaining")
+            data.cooldown = ok_cooldown and cooldown or 0
+
+            local ok_level, level = safe_method_call(ability, "GetLevel")
+            data.level = ok_level and level or 0
+
+            local ok_passive, passive = safe_method_call(ability, "IsPassive")
+            data.isPassive = ok_passive and passive or false
+
+            local ok_range, range = safe_method_call(ability, "GetCastRange")
+            data.castRange = ok_range and range or 0
+
+            local ok_cost, cost = safe_method_call(ability, "GetManaCost")
+            data.manaCost = ok_cost and cost or 0
+
+            table.insert(result, data)
         end
     end
+
+    -- if #result == 0 then
+    --     print("[DEBUG] iterate_abilities: no valid abilities found for entity")
+    -- end
+
     return result
 end
 
