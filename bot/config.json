@@ -1,13 +1,35 @@
 {
-  "aggression": 0.65,
-  "retreatHpThreshold": 0.25,
-  "healHpThreshold": 0.5,
-  "healManaThreshold": 0.35,
-  "farmSearchRadius": 1600,
-  "roamSearchRadius": 2200,
-  "fightEngageThreshold": 0.58,
-  "pushWaveRange": 2800,
+  "aggression": 0.7,
+  "retreatHpThreshold": 0.28,
+  "healHpThreshold": 0.55,
+  "healManaThreshold": 0.4,
+  "farmSearchRadius": 1800,
+  "roamSearchRadius": 2400,
+  "fightEngageThreshold": 0.6,
+  "pushWaveRange": 3000,
   "logLevel": "INFO",
-  "logLimitPerTick": 12,
-  "debug": false
+  "logLimitPerTick": 16,
+  "debug": false,
+  "pursueTimeout": 3.8,
+  "runePrepTime": 12,
+  "runeInterval": 120,
+  "pullPrepWindow": 8,
+  "stackPrepWindow": 8,
+  "farmSafetyBias": 0.4,
+  "gankSoloDistance": 2000,
+  "shopMinGold": 250,
+  "orbwalkHold": 0.1,
+  "orbwalkMoveStep": 140,
+  "dangerDecay": 0.9,
+  "rotationCooldown": 20,
+  "tpDefendThreshold": 0.6,
+  "farmHeatmapDecay": 0.82,
+  "economy": {
+    "forceTp": true,
+    "allowGreed": true,
+    "farmAccelerators": true
+  },
+  "nav": {
+    "safeWaypointRadius": 950
+  }
 }

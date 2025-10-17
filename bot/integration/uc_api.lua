@@ -1,26 +1,33 @@
-local util = require("core.util")
-
 local M = {
     _player = nil,
 }
 
 local bit = bit32 or bit
 
+local function safe_call(func, ...)
+    if not func then
+        return nil
+    end
+    local ok, result = pcall(func, ...)
+    if not ok then
+        return nil
+    end
+    return result
+end
+
 local function ensure_player()
     if M._player and Entity.IsEntity and Entity.IsEntity(M._player) then
         return M._player
     end
-    if Players and Players.GetLocal then
-        M._player = Players.GetLocal()
+    local player = safe_call(Players and Players.GetLocal)
+    if player then
+        M._player = player
     end
     return M._player
 end
 
 function M.self()
-    if Heroes and Heroes.GetLocal then
-        return Heroes.GetLocal()
-    end
-    return nil
+    return safe_call(Heroes and Heroes.GetLocal)
 end
 
 function M.player()
@@ -29,51 +36,252 @@ end
 
 function M.team()
     local hero = M.self()
-    if hero then
+    if hero and Entity.GetTeamNum then
         return Entity.GetTeamNum(hero)
     end
     return nil
 end
 
+function M.getTime()
+    return safe_call(GameRules and GameRules.GetGameTime) or 0
+end
+
 function M.time()
-    if GameRules and GameRules.GetGameTime then
-        return GameRules.GetGameTime()
+    return M.getTime()
+end
+
+function M.tpReady()
+    local hero = M.self()
+    if not hero or not NPC.HasItem then
+        return false
+    end
+    local tp = NPC.HasItem(hero, "item_tpscroll")
+    if not tp then
+        return false
+    end
+    if Ability.SecondsSinceLastUse then
+        return Ability.SecondsSinceLastUse(tp) > 0
+    end
+    return true
+end
+
+function M.useTP(pos)
+    if not pos then
+        return false
+    end
+    local hero = M.self()
+    if not hero or not NPC.HasItem then
+        return false
+    end
+    local tp = NPC.HasItem(hero, "item_tpscroll")
+    if not tp then
+        return false
+    end
+    if Ability.CastPosition then
+        Ability.CastPosition(tp, pos, false, false, true, "uc_tp", true)
+        return true
+    end
+    return false
+end
+
+function M.canBuy(item)
+    local player = ensure_player()
+    if not player or not Shop.CanBeUsed then
+        return false
+    end
+    return Shop.CanBeUsed(player, item)
+end
+
+function M.buy(item)
+    local player = ensure_player()
+    if not player or not Shop.PurchaseItem then
+        return false
+    end
+    return Shop.PurchaseItem(player, item, false, true, "uc_buy")
+end
+
+function M.stashPull()
+    local player = ensure_player()
+    if not player or not Shop.PullFromStash then
+        return false
+    end
+    Shop.PullFromStash(player)
+    return true
+end
+
+function M.courierSend()
+    if Courier and Courier.Send then
+        Courier.Send()
+        return true
+    end
+    return false
+end
+
+function M.glyph()
+    if GameRules and GameRules.UseGlyph then
+        GameRules.UseGlyph()
+        return true
+    end
+    return false
+end
+
+function M.scan(pos)
+    if not pos or not GameRules or not GameRules.CastScan then
+        return false
+    end
+    GameRules.CastScan(pos)
+    return true
+end
+
+local function safe_table(result)
+    if type(result) ~= "table" then
+        return {}
+    end
+    return result
+end
+
+function M.runes()
+    return safe_table(safe_call(World and World.Runes))
+end
+
+function M.camps()
+    return safe_table(safe_call(World and World.Camps))
+end
+
+function M.lanes()
+    return safe_table(safe_call(World and World.Lanes))
+end
+
+function M.towers()
+    return safe_table(safe_call(World and World.Towers))
+end
+
+function M.shrines()
+    return safe_table(safe_call(World and World.Shrines))
+end
+
+function M.ancients()
+    return safe_table(safe_call(World and World.Ancients))
+end
+
+function M.creeps(team)
+    return safe_table(safe_call(World and World.Creeps, team))
+end
+
+function M.heroes()
+    return safe_table(safe_call(World and World.Heroes))
+end
+
+function M.wards(team)
+    return safe_table(safe_call(World and World.Wards, team))
+end
+
+function M.nearestShop(shopType)
+    if not World or not World.NearestShop then
+        return nil
+    end
+    local hero = M.self()
+    if not hero then
+        return nil
+    end
+    return World.NearestShop(hero, shopType)
+end
+
+function M.currentGold()
+    local hero = M.self()
+    if hero and NPC.GetGold then
+        return NPC.GetGold(hero, true)
     end
     return 0
 end
 
-function M.is_valid(entity)
-    return entity ~= nil and Entity.IsEntity(entity)
-end
-
-function M.move_to(position)
+function M.netWorth()
     local hero = M.self()
-    if not hero or not position then
-        return
+    if hero and NPC.GetNetWorth then
+        return NPC.GetNetWorth(hero)
     end
-    NPC.MoveTo(hero, position, false, false, false, true)
+    return M.currentGold()
 end
 
-function M.attack(target)
+function M.talentPoints()
+    local hero = M.self()
+    if hero and NPC.GetTalentPoints then
+        return NPC.GetTalentPoints(hero)
+    end
+    return 0
+end
+
+function M.learnSkill(name)
+    local hero = M.self()
+    if not hero or not hero or not NPC.GetAbilityByName then
+        return false
+    end
+    local ability = NPC.GetAbilityByName(hero, name)
+    if ability and Ability.LevelUp then
+        Ability.LevelUp(ability, false, true, "uc_learn")
+        return true
+    end
+    return false
+end
+
+function M.availableSkills()
+    local hero = M.self()
+    if not hero or not NPC.GetAbilityPoints then
+        return {}
+    end
+    if NPC.GetAbilityPoints(hero) <= 0 then
+        return {}
+    end
+    local skills = {}
+    for i = 0, 23 do
+        local ability = NPC.GetAbilityByIndex(hero, i)
+        if ability and Ability.CanLearn and Ability.CanLearn(ability) then
+            table.insert(skills, Ability.GetName(ability))
+        end
+    end
+    return skills
+end
+
+function M.moveTo(pos)
+    local hero = M.self()
+    if not hero or not pos or not NPC.MoveTo then
+        return false
+    end
+    NPC.MoveTo(hero, pos, false, false, false, true)
+    return true
+end
+
+function M.attack(entity)
     local hero = M.self()
     local player = ensure_player()
-    if not hero or not target or not player then
-        return
+    if not hero or not entity or not player or not Player.AttackTarget then
+        return false
     end
-    Player.AttackTarget(player, hero, target, false, false, true, "uczone_attack", true)
+    Player.AttackTarget(player, hero, entity, false, false, true, "uc_attack", true)
+    return true
+end
+
+function M.hold()
+    local hero = M.self()
+    local player = ensure_player()
+    if not hero or not player or not Player.HoldPosition then
+        return false
+    end
+    Player.HoldPosition(player, hero, false, false, true, "uc_hold")
+    return true
 end
 
 function M.stop()
     local hero = M.self()
     local player = ensure_player()
-    if not hero or not player then
-        return
+    if not hero or not player or not Player.PrepareUnitOrders then
+        return false
     end
     Player.PrepareUnitOrders(
         player,
         Enum.UnitOrder.DOTA_UNIT_ORDER_STOP,
         nil,
-        Entity.GetAbsOrigin(hero),
+        hero and Entity.GetAbsOrigin and Entity.GetAbsOrigin(hero) or Vector(0, 0, 0),
         nil,
         Enum.PlayerOrderIssuer.DOTA_ORDER_ISSUER_HERO_ONLY,
         hero,
@@ -81,8 +289,9 @@ function M.stop()
         false,
         false,
         true,
-        "uczone_stop"
+        "uc_stop"
     )
+    return true
 end
 
 local function ability_behavior(ability)
@@ -102,114 +311,112 @@ local function has_behavior(behavior, flag)
     return false
 end
 
-function M.cast(ability, target)
-    if not ability then
-        return false
+local function ensure_ability(name)
+    local hero = M.self()
+    if not hero or not name or not NPC.GetAbilityByName then
+        return nil
     end
-    if not Ability.IsReady(ability) then
+    return NPC.GetAbilityByName(hero, name)
+end
+
+function M.cast(spellId, target)
+    local ability = spellId
+    if type(spellId) == "string" then
+        ability = ensure_ability(spellId)
+    end
+    if not ability or not Ability.IsReady or not Ability.IsReady(ability) then
         return false
     end
     local behavior = ability_behavior(ability)
-    if target and type(target) == "userdata" and Entity.IsEntity(target) then
-        if has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) then
-            Ability.CastTarget(ability, target, false, false, true, "uczone_cast")
-            return true
-        end
-    elseif target and type(target) == "userdata" then
-        if has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_POINT)
-            or has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_VECTOR_TARGETING) then
-            Ability.CastPosition(ability, target, false, false, true, "uczone_cast", true)
-            return true
-        end
+    if target and Entity.IsEntity and Entity.IsEntity(target) and has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) then
+        Ability.CastTarget(ability, target, false, false, true, "uc_cast")
+        return true
+    end
+    if target and type(target) == "userdata" and has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_POINT) then
+        Ability.CastPosition(ability, target, false, false, true, "uc_cast", true)
+        return true
     end
     if has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_NO_TARGET) then
-        Ability.CastNoTarget(ability, false, false, true, "uczone_cast")
+        Ability.CastNoTarget(ability, false, false, true, "uc_cast")
         return true
     end
     return false
 end
 
-function M.toggle(ability)
-    if not ability then
+function M.useItem(name, target)
+    return M.cast(name, target)
+end
+
+function M.distance(a, b)
+    if not a or not b or not Entity.GetAbsOrigin then
+        return math.huge
+    end
+    local va = Entity.GetAbsOrigin(a)
+    local vb = Entity.GetAbsOrigin(b)
+    if va and vb and va.Distance2D then
+        return va:Distance2D(vb)
+    end
+    if va and vb then
+        local dx = (va.x or 0) - (vb.x or 0)
+        local dy = (va.y or 0) - (vb.y or 0)
+        return math.sqrt(dx * dx + dy * dy)
+    end
+    return math.huge
+end
+
+function M.isVisible(entity)
+    if not entity or not Entity.IsVisible then
         return false
     end
-    if has_behavior(ability_behavior(ability), Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_TOGGLE) then
-        Ability.Toggle(ability, false, false, true, "uczone_toggle")
-        return true
-    end
-    return false
+    return Entity.IsVisible(entity)
 end
 
-function M.find_ability(hero, name)
-    if not hero or not name then
-        return nil
+function M.isAlive(entity)
+    if not entity or not Entity.IsAlive then
+        return false
     end
-    for i = 0, 23 do
-        local ability = NPC.GetAbilityByIndex(hero, i)
-        if ability and Ability.GetName(ability) == name then
-            return ability
-        end
-    end
-    return nil
+    return Entity.IsAlive(entity)
 end
 
-function M.iterate_abilities(hero)
-    local abilities = {}
+function M.projectDamage(unit, window)
+    if not unit then
+        return 0
+    end
+    if NPC.EstimateIncomingDamage then
+        return NPC.EstimateIncomingDamage(unit, window or 2)
+    end
+    if Entity.GetHealth then
+        return Entity.GetMaxHealth(unit) * 0.2
+    end
+    return 0
+end
+
+function M.timeSinceDamaged(unit)
+    if not unit or not NPC.GetTimeSinceDamaged then
+        return math.huge
+    end
+    return NPC.GetTimeSinceDamaged(unit)
+end
+
+function M.isGankLikely(pos)
+    if not pos then
+        return false
+    end
+    if World and World.IsGankLikely then
+        return World.IsGankLikely(pos)
+    end
+    local enemies = M.heroes()
+    local hero = M.self()
     if not hero then
-        return abilities
+        return false
     end
-    for i = 0, 23 do
-        local ability = NPC.GetAbilityByIndex(hero, i)
-        if ability then
-            local name = Ability.GetName(ability)
-            abilities[name] = {
-                handle = ability,
-                level = Ability.GetLevel and Ability.GetLevel(ability) or 0,
-                cooldown = Ability.GetCooldown(ability),
-                manaCost = Ability.GetManaCost(ability),
-                behavior = ability_behavior(ability),
-                damage = Ability.GetDamage and Ability.GetDamage(ability) or 0,
-                lastUsed = Ability.SecondsSinceLastUse and Ability.SecondsSinceLastUse(ability) or math.huge,
-            }
+    local count = 0
+    for _, enemy in ipairs(enemies) do
+        if enemy and enemy.team and hero and Entity.GetTeamNum and enemy.team ~= Entity.GetTeamNum(hero) then
+            count = count + 1
         end
     end
-    return abilities
-end
-
-function M.iterate_items(hero)
-    local items = {}
-    if not hero then
-        return items
-    end
-    for slot = 0, 8 do
-        local item = NPC.GetItemByIndex(hero, slot)
-        if item then
-            local name = Ability.GetName(item)
-            items[name] = {
-                handle = item,
-                cooldown = Ability.GetCooldown(item),
-                manaCost = Ability.GetManaCost(item),
-                behavior = ability_behavior(item),
-            }
-        end
-    end
-    local neutral = NPC.GetNeutralItem and NPC.GetNeutralItem(hero) or nil
-    if neutral then
-        local name = Ability.GetName(neutral)
-        items[name] = {
-            handle = neutral,
-            cooldown = Ability.GetCooldown(neutral),
-            manaCost = Ability.GetManaCost(neutral),
-            behavior = ability_behavior(neutral),
-        }
-    end
-    return items
-end
-
-function M.ping(position, message)
-    if Minimap and Minimap.Ping then
-        Minimap.Ping(position, message or "BOT")
-    end
+    return count >= 2
 end
 
 return M

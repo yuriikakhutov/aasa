@@ -1,24 +1,21 @@
+local path = require("integration.path")
+
 local M = {}
 
-local BASE_PATHS = {
-    ".\\scripts\\bot\\",
-    "./scripts/bot/",
-    "scripts/bot/",
-    "./bot/",
-    "bot/",
-    "",
-}
-
 function M.resolve_path(filename)
-    for _, base in ipairs(BASE_PATHS) do
-        local path = base .. filename
-        local handle = io.open(path, "r")
-        if handle then
-            handle:close()
-            return path
+    local root = path.root()
+    local attempts = {
+        path.join(root, filename),
+        path.join(filename),
+        filename,
+    }
+    for _, candidate in ipairs(attempts) do
+        local normalized = candidate
+        if path.exists(normalized) then
+            return normalized
         end
     end
-    return BASE_PATHS[1] .. filename
+    return attempts[1]
 end
 
 return M

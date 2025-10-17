@@ -1,6 +1,7 @@
 local api = require("integration.uc_api")
 local bb = require("core.blackboard")
 local util = require("core.util")
+local nav = require("core.nav")
 
 local bit = bit32 or bit
 
@@ -16,27 +17,7 @@ local function has_behavior(behavior, flag)
     return false
 end
 
-local function ability_priority(name, data)
-    local priority = 0
-    if data.damage and data.damage > 0 then
-        priority = priority + util.clamp(data.damage / 300, 0.1, 2.5)
-    end
-    if Ability.IsUltimate and Ability.IsUltimate(data.handle) then
-        priority = priority + 2
-    end
-    if string.find(name, "stun") or string.find(name, "disable") or string.find(name, "hex") then
-        priority = priority + 1.5
-    end
-    if string.find(name, "slow") then
-        priority = priority + 0.5
-    end
-    if data.cooldown and data.cooldown > 30 then
-        priority = priority + 0.4
-    end
-    return priority
-end
-
-local function is_ready(data)
+local function ability_ready(data)
     if not data or not data.handle then
         return false
     end
@@ -55,7 +36,7 @@ local function is_ready(data)
     return true
 end
 
-local function offensive_filter(data)
+local function offensive(data)
     if not data then
         return false
     end
@@ -63,6 +44,65 @@ local function offensive_filter(data)
     return has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET)
         or has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_POINT)
         or has_behavior(behavior, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_NO_TARGET)
+end
+
+local function score_ability(name, data)
+    local score = 0
+    if Ability.IsUltimate and Ability.IsUltimate(data.handle) then
+        score = score + 2.5
+    end
+    if data.damage and data.damage > 0 then
+        score = score + util.clamp(data.damage / 300, 0.2, 3.0)
+    end
+    if string.find(name, "stun") or string.find(name, "disable") or string.find(name, "hex") then
+        score = score + 1.5
+    end
+    if string.find(name, "silence") then
+        score = score + 1.2
+    end
+    if string.find(name, "slow") then
+        score = score + 0.4
+    end
+    return score
+end
+
+local function gather_abilities(filter)
+    local abilities = {}
+    if not bb.heroData or not bb.heroData.abilities then
+        return abilities
+    end
+    for name, data in pairs(bb.heroData.abilities) do
+        if filter(name, data) then
+            table.insert(abilities, { name = name, data = data, score = score_ability(name, data) })
+        end
+    end
+    table.sort(abilities, function(a, b)
+        return a.score > b.score
+    end)
+    return abilities
+end
+
+function M.predictCast(spell, target, projectileSpeed, castPoint, leadBase)
+    if not target then
+        return nil
+    end
+    leadBase = leadBase or 0.3
+    projectileSpeed = projectileSpeed or 900
+    castPoint = castPoint or 0
+    local pos = nav.predictivePos(target, leadBase + castPoint)
+    if not pos then
+        return nil
+    end
+    if projectileSpeed > 0 then
+        local hero = api.self()
+        if hero then
+            local heroPos = Entity.GetAbsOrigin(hero)
+            local distance = util.distance2d(heroPos, pos)
+            local travel = distance / projectileSpeed
+            pos = nav.predictivePos(target, travel + castPoint) or pos
+        end
+    end
+    return pos
 end
 
 function M.cast(ability, target)
@@ -73,36 +113,59 @@ function M.cast(ability, target)
 end
 
 function M.prioritized_spells(target)
-    local result = {}
-    if not bb.heroData or not bb.heroData.abilities then
-        return result
-    end
-    for name, data in pairs(bb.heroData.abilities) do
-        if offensive_filter(data) and is_ready(data) then
-            table.insert(result, { handle = data.handle, priority = ability_priority(name, data) })
-        end
-    end
-    table.sort(result, function(a, b)
-        return a.priority > b.priority
+    local list = gather_abilities(function(name, data)
+        return offensive(data) and ability_ready(data)
     end)
     local handles = {}
-    for _, entry in ipairs(result) do
-        table.insert(handles, entry.handle)
+    for _, entry in ipairs(list) do
+        table.insert(handles, entry.data.handle)
     end
     return handles
 end
 
 function M.poke_spells(target)
-    local result = {}
-    if not bb.heroData or not bb.heroData.abilities then
-        return result
+    local list = gather_abilities(function(name, data)
+        return offensive(data) and ability_ready(data) and (data.manaCost or 0) <= (bb.heroData.maxMana * 0.2)
+    end)
+    local handles = {}
+    for _, entry in ipairs(list) do
+        table.insert(handles, entry.data.handle)
     end
-    for name, data in pairs(bb.heroData.abilities) do
-        if offensive_filter(data) and is_ready(data) and (data.manaCost or 0) <= (bb.heroData.maxMana * 0.2) then
-            table.insert(result, data.handle)
+    return handles
+end
+
+function M.burstCombo(target)
+    if not target then
+        return
+    end
+    local spells = M.prioritized_spells(target)
+    for _, ability in ipairs(spells) do
+        local name = Ability.GetName and Ability.GetName(ability) or ""
+        if has_behavior(Ability.GetBehavior and Ability.GetBehavior(ability), Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_POINT) then
+            local pos = M.predictCast(ability, target)
+            if pos then
+                api.cast(ability, pos)
+            end
+        else
+            api.cast(ability, target)
         end
     end
-    return result
+end
+
+function M.finishSecure(target)
+    if not target then
+        return false
+    end
+    if not Entity.IsAlive(target) then
+        return false
+    end
+    local hp = Entity.GetHealth(target)
+    local damage = (bb.heroData.attackDamage or 0) * 2 + (bb.heroData.comboDamage or 0)
+    if damage >= hp then
+        api.attack(target)
+        return true
+    end
+    return false
 end
 
 return M

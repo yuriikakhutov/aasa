@@ -7,11 +7,23 @@ local bb = require("core.blackboard")
 local config = require("config")
 local api = require("integration.uc_api")
 local util = require("core.util")
+local log = require("integration.log")
+local laning = require("core.laning")
+local economy = require("core.economy")
 
+log.configure(config)
 bb:init(config)
 
+local function on_spawn()
+    bb:reset()
+    laning.assign()
+    economy.planBuild(bb.role or "carry", bb.enemyHints)
+end
+
 local function on_tick(evt)
+    log.tick(evt.time)
     perception.scan(evt.dt)
+    economy.tick(evt.time)
     local mode = selector.decide(evt.time)
     scheduler.run(mode, evt.time)
 end
@@ -19,7 +31,11 @@ end
 events.on("tick", on_tick)
 
 events.on("entity_create", function(evt)
-    bb:updateEnemy({ entity = evt.entity })
+    if evt.entity and evt.entity == api.self() then
+        on_spawn()
+    else
+        bb:updateEnemy({ entity = evt.entity })
+    end
 end)
 
 events.on("damage", function(evt)

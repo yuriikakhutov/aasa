@@ -1,10 +1,24 @@
 local bb = require("core.blackboard")
 local threat = require("core.threat")
-local nav = require("integration.nav")
+local nav = require("core.nav")
+local util = require("core.util")
 
 local M = {}
 
 function M.select_fight_target()
+    local best = bb:bestEnemy()
+    return best and best.entity or nil
+end
+
+function M.select_gank_target()
+    for _, enemy in ipairs(bb.enemies or {}) do
+        if enemy.isVisible and enemy.healthRatio < 0.7 and enemy.position then
+            local danger = bb:getDangerAt(enemy.position)
+            if danger < 0.4 then
+                return enemy.entity
+            end
+        end
+    end
     local best = bb:bestEnemy()
     return best and best.entity or nil
 end
@@ -44,14 +58,6 @@ end
 
 function M.farm_target()
     return bb:safeFarmTarget()
-end
-
-function M.push_position()
-    local target = bb:bestEnemy()
-    if target and target.position then
-        return target.position
-    end
-    return nav and nav.next_roam_point and nav.next_roam_point() or nil
 end
 
 return M
