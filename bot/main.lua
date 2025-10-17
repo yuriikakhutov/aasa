@@ -22,10 +22,17 @@ end
 
 local function on_tick(evt)
     log.tick(evt.time)
+    local now = evt.time or api.time()
+    if api.isPlayerControlling and api.isPlayerControlling() then
+        bb:setUserOverride(now + 2)
+    end
     perception.scan(evt.dt)
-    economy.tick(evt.time)
-    local mode = selector.decide(evt.time)
-    scheduler.run(mode, evt.time)
+    economy.tick(now)
+    local mode = selector.decide(now)
+    if bb:isUserOverride(now) then
+        return
+    end
+    scheduler.run(mode, now)
 end
 
 events.on("tick", on_tick)

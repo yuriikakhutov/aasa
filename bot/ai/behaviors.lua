@@ -83,7 +83,7 @@ end
 function M.roam()
     return {
         kind = "roam",
-        position = nav.nextRoamPoint(),
+        position = nav.randomSafePos() or nav.nextRoamPoint(),
     }
 end
 

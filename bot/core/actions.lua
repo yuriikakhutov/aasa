@@ -77,7 +77,11 @@ handlers.farm = function(intent)
 end
 
 handlers.roam = function(intent)
-    movement.move_to(nav.nextRoamPoint())
+    if intent and intent.position then
+        movement.move_to(intent.position)
+    else
+        movement.roam()
+    end
 end
 
 handlers.stack = function(intent)

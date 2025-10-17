@@ -54,7 +54,7 @@ local function utility_push()
     if bb.waveAdvantage then
         return 0.6
     end
-    return 0.25
+    return 0.25 + (bb.farmEfficiency or 0) * 0.1
 end
 
 local function utility_defend(time)
@@ -96,7 +96,8 @@ end
 local function utility_rune(time)
     local spot, spawn = laning.runeWindow(time)
     if spot then
-        return 0.68
+        local eta = math.max((spawn or time) - time, 0)
+        return util.clamp(0.9 - eta * 0.03, 0, 0.9)
     end
     return 0
 end
@@ -128,7 +129,7 @@ local function utility_objective(time)
 end
 
 local function utility_roam()
-    return 0.3
+    return 0.3 + (bb.dangerLevel or 0) * 0.1
 end
 
 local function fallback(scores)
@@ -136,6 +137,7 @@ local function fallback(scores)
 end
 
 function M.decide(time)
+    time = time or api.time()
     local scores = {
         { mode = "retreat", score = utility_retreat() },
         { mode = "heal", score = utility_heal() },
@@ -155,7 +157,7 @@ function M.decide(time)
         return a.score > b.score
     end)
     local top = scores[1]
-    bb.events.lastMode = top.mode
+    bb:setMode(top.mode, time)
     return top.mode
 end
 

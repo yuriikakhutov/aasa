@@ -13,6 +13,11 @@ local SAFE_TRIANGLES = {
     Vector(3600, -4300, 0),
 }
 
+local FOUNTAINS = {
+    [2] = Vector(-7200, -6600, 0),
+    [3] = Vector(7200, 6600, 0),
+}
+
 local RUNE_SPOTS = {
     top = Vector(-2288, 1856, 0),
     bottom = Vector(2304, -1856, 0),
@@ -69,6 +74,15 @@ local STACK_DATA = {
     hard = { stackTime = 53.8, approach = Vector(3400, -2800, 0), exit = Vector(3800, -3000, 0) },
 }
 
+local JUNGLE_CAMPS = {
+    radiant_small = { position = Vector(-4300, 3500, 0), danger = 0.2 },
+    radiant_medium = { position = Vector(-2000, 3500, 0), danger = 0.3 },
+    radiant_large = { position = Vector(-3200, 4800, 0), danger = 0.35 },
+    dire_small = { position = Vector(4300, -3500, 0), danger = 0.2 },
+    dire_medium = { position = Vector(2000, -3500, 0), danger = 0.3 },
+    dire_large = { position = Vector(3200, -4800, 0), danger = 0.35 },
+}
+
 local function nearest(list, pos)
     local best, bestDist = nil, math.huge
     for _, point in ipairs(list) do
@@ -101,8 +115,7 @@ function M.safeRetreat()
         return fountain
     end
     local team = Entity.GetTeamNum(hero)
-    local fallback = team == 2 and Vector(-7200, -6600, 0) or Vector(7200, 6600, 0)
-    return fallback
+    return FOUNTAINS[team] or SAFE_TRIANGLES[1]
 end
 
 function M.pathTo(target)
@@ -134,6 +147,9 @@ function M.rotateTo(targetArea)
 end
 
 function M.nextRoamPoint()
+    if #ROAM_GRAPH == 0 then
+        return SAFE_TRIANGLES[1]
+    end
     local point = ROAM_GRAPH[M._roamIndex]
     M._roamIndex = M._roamIndex + 1
     if M._roamIndex > #ROAM_GRAPH then
@@ -167,7 +183,11 @@ function M.predictivePos(unit, leadSec)
 end
 
 function M.randomSafePos()
-    return SAFE_TRIANGLES[math.random(1, #SAFE_TRIANGLES)]
+    local count = #SAFE_TRIANGLES
+    if count == 0 then
+        return nil
+    end
+    return SAFE_TRIANGLES[math.random(1, count)]
 end
 
 function M.runeSpot(which)
@@ -184,6 +204,18 @@ function M.nearestShopPos(shopType)
         return shop.position
     end
     return SAFE_TRIANGLES[1]
+end
+
+function M.getLaneWaypoints(lane)
+    return LANE_PATHS[lane]
+end
+
+function M.getJungleCamp(id)
+    return JUNGLE_CAMPS[id]
+end
+
+function M.getFountain(team)
+    return FOUNTAINS[team]
 end
 
 return M

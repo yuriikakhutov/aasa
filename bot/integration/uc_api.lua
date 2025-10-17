@@ -50,6 +50,38 @@ function M.time()
     return M.getTime()
 end
 
+function M.isPlayerControlling()
+    local player = ensure_player()
+    if not player then
+        return false
+    end
+    if Player and Player.IsControlling then
+        local result = safe_call(Player.IsControlling, player)
+        if result ~= nil then
+            return result and result ~= 0
+        end
+    end
+    if Input and Input.IsInputCaptured then
+        local captured = safe_call(Input.IsInputCaptured)
+        if captured ~= nil then
+            return captured and captured ~= 0
+        end
+    end
+    if Input and Input.IsGameInputEnabled then
+        local enabled = safe_call(Input.IsGameInputEnabled)
+        if enabled == false then
+            return true
+        end
+    end
+    if Input and Input.IsButtonDown and Enum and Enum.ButtonCode and Enum.ButtonCode.MOUSE_LEFT then
+        local pressed = safe_call(Input.IsButtonDown, Enum.ButtonCode.MOUSE_LEFT)
+        if pressed then
+            return true
+        end
+    end
+    return false
+end
+
 function M.tpReady()
     local hero = M.self()
     if not hero or not NPC.HasItem then

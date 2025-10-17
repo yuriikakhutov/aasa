@@ -19,7 +19,7 @@ local M = {
     events = {
         lastEnemySeen = {},
         lastDamage = {},
-        lastMode = "idle",
+        lastMode = "roam",
     },
     safe = true,
     threat = 0,
@@ -47,6 +47,12 @@ local M = {
     lastOrderAt = 0,
     lastAttackAt = 0,
     lastMoveAt = 0,
+    lastModeTime = 0,
+    user_override_until = -math.huge,
+    nextRuneTime = 0,
+    nextStackTime = 0,
+    farmEfficiency = 0,
+    dangerLevel = 0,
     debugData = {},
 }
 
@@ -65,7 +71,7 @@ function M:reset()
     self.structures = {}
     self.events.lastEnemySeen = {}
     self.events.lastDamage = {}
-    self.events.lastMode = "idle"
+    self.events.lastMode = "roam"
     self.safe = true
     self.threat = 0
     self.winChance = 0.5
@@ -92,6 +98,12 @@ function M:reset()
     self.lastOrderAt = 0
     self.lastAttackAt = 0
     self.lastMoveAt = 0
+    self.lastModeTime = 0
+    self.user_override_until = -math.huge
+    self.nextRuneTime = 0
+    self.nextStackTime = 0
+    self.farmEfficiency = 0
+    self.dangerLevel = 0
     self.debugData = {}
 end
 
@@ -168,6 +180,7 @@ end
 function M:updateThreat(threatScore, winChance, safe)
     if threatScore then
         self.threat = threatScore
+        self.dangerLevel = util.clamp(threatScore, 0, 1)
     end
     if winChance then
         self.winChance = winChance
@@ -333,6 +346,7 @@ function M:decayDanger()
             self.dangerMap[key] = nextValue
         end
     end
+    self.dangerLevel = self.dangerLevel * decay
 end
 
 function M:updateFarmScore(id, pos, reward)
@@ -345,6 +359,14 @@ function M:updateFarmScore(id, pos, reward)
     local decay = self.config.farmHeatmapDecay or 0.85
     local prev = self.farmHeatmap[id] or score
     self.farmHeatmap[id] = prev * decay + score * (1 - decay)
+    local total, count = 0, 0
+    for _, value in pairs(self.farmHeatmap) do
+        total = total + value
+        count = count + 1
+    end
+    if count > 0 then
+        self.farmEfficiency = total / count
+    end
 end
 
 function M:bestFarmNode()
@@ -421,6 +443,40 @@ end
 
 function M:markMove(time)
     self.lastMoveAt = time
+end
+
+function M:setMode(mode, time)
+    if not mode then
+        return
+    end
+    self.events.lastMode = mode
+    self.lastModeTime = time or self.lastModeTime
+end
+
+function M:setUserOverride(untilTime)
+    if not untilTime then
+        return
+    end
+    if untilTime > (self.user_override_until or -math.huge) then
+        self.user_override_until = untilTime
+    end
+end
+
+function M:isUserOverride(now)
+    now = now or 0
+    return now < (self.user_override_until or -math.huge)
+end
+
+function M:setNextRuneTime(time)
+    if time and time > (self.nextRuneTime or 0) then
+        self.nextRuneTime = time
+    end
+end
+
+function M:setNextStackTime(time)
+    if time and time > (self.nextStackTime or 0) then
+        self.nextStackTime = time
+    end
 end
 
 function M:getItem(name)

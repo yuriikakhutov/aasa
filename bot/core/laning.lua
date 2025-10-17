@@ -74,6 +74,7 @@ end
 
 function M.runeWindow(time)
     local spawn, prep = rune_cycle(time)
+    bb:setNextRuneTime(spawn)
     if time >= prep and time < spawn + 5 then
         local lane, role = M.assign()
         if role == "mid" then
@@ -117,6 +118,7 @@ function M.pullOpportunity(time)
     local seconds = time % 60
     local window = bb.config.pullPrepWindow or 8
     if seconds >= data.pullTime - window and seconds <= data.pullTime + 1 then
+        bb:setNextStackTime(time - seconds + data.pullTime)
         return data
     end
     return nil
@@ -130,6 +132,7 @@ function M.stackOpportunity(time)
     local seconds = time % 60
     local window = bb.config.stackPrepWindow or 8
     if seconds >= data.stackTime - window and seconds <= data.stackTime + 1 then
+        bb:setNextStackTime(time - seconds + data.stackTime)
         return data
     end
     return nil
