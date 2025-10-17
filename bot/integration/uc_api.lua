@@ -451,4 +451,50 @@ function M.isGankLikely(pos)
     return count >= 2
 end
 
+-- >>> DO NOT REMOVE: REQUIRED BY AI CORE (perception/combat/items)
+-- === Safe ability/item iteration API (required by perception & combat) ===
+function M.iterate_abilities(entity)
+    local result = {}
+    if not entity or not entity.GetAbilityCount then
+        return result
+    end
+
+    local count = entity:GetAbilityCount()
+    for i = 0, (count or 0) - 1 do
+        local ability = entity:GetAbilityByIndex(i)
+        if ability and ability.GetName then
+            table.insert(result, {
+                name = ability:GetName(),
+                isReady = ability.IsFullyCastable and ability:IsFullyCastable() or false,
+                cooldown = ability.GetCooldownTimeRemaining and ability:GetCooldownTimeRemaining() or 0,
+                level = ability.GetLevel and ability:GetLevel() or 0,
+                isPassive = ability.IsPassive and ability:IsPassive() or false,
+                castRange = ability.GetCastRange and ability:GetCastRange() or 0,
+                manaCost = ability.GetManaCost and ability:GetManaCost() or 0,
+            })
+        end
+    end
+    return result
+end
+
+function M.iterate_items(entity)
+    local result = {}
+    if not entity or not entity.GetItemInSlot then
+        return result
+    end
+
+    for i = 0, 15 do
+        local item = entity:GetItemInSlot(i)
+        if item and item.GetName then
+            table.insert(result, {
+                name = item:GetName(),
+                isReady = item.IsFullyCastable and item:IsFullyCastable() or false,
+                cooldown = item.GetCooldownTimeRemaining and item:GetCooldownTimeRemaining() or 0,
+                slot = i,
+            })
+        end
+    end
+    return result
+end
+
 return M
