@@ -49,6 +49,7 @@ local state = {
     button_down = {},
     use_right_click = nil,
     attack_buttons = nil,
+    next_bind_refresh = nil,
 }
 
 local function safe_call(fn, ...)
@@ -70,6 +71,7 @@ local function reset_state()
     state.button_down = {}
     state.use_right_click = nil
     state.attack_buttons = nil
+    state.next_bind_refresh = nil
 end
 
 local function refresh_handles()
@@ -136,34 +138,260 @@ local function read_force_right_click()
     return nil
 end
 
-local function refresh_attack_binding()
-    local use_right = read_force_right_click()
-    if use_right == nil then
-        use_right = true
+local KEYBIND_FILES = {
+    "cfg/keyboard_personal.vcfg",
+    "cfg/keyboard.vcfg",
+    "cfg/config.cfg",
+    "game/dota/cfg/keyboard_personal.vcfg",
+    "game/dota/cfg/keyboard.vcfg",
+    "game/dota/cfg/config.cfg",
+    "../cfg/keyboard_personal.vcfg",
+    "../cfg/keyboard.vcfg",
+    "../cfg/config.cfg",
+    "keyboard_personal.vcfg",
+    "keyboard.vcfg",
+    "config.cfg",
+}
+
+local SPECIAL_KEY_ALIASES = {
+    ["["] = "KEY_LBRACKET",
+    ["]"] = "KEY_RBRACKET",
+    [";"] = "KEY_SEMICOLON",
+    ["'"] = "KEY_APOSTROPHE",
+    ["`"] = "KEY_BACKQUOTE",
+    [","] = "KEY_COMMA",
+    ["."] = "KEY_PERIOD",
+    ["/"] = "KEY_SLASH",
+    ["\\"] = "KEY_BACKSLASH",
+    ["-"] = "KEY_MINUS",
+    ["="] = "KEY_EQUAL",
+}
+
+local KEY_NAME_ALIASES = {
+    MOUSE1 = "KEY_MOUSE1",
+    MOUSE2 = "KEY_MOUSE2",
+    MOUSE3 = "KEY_MOUSE3",
+    MOUSE4 = "KEY_MOUSE4",
+    MOUSE5 = "KEY_MOUSE5",
+    MOUSE_LEFT = "KEY_MOUSE1",
+    MOUSE_RIGHT = "KEY_MOUSE2",
+    MOUSE_MIDDLE = "KEY_MOUSE3",
+    MWHEELUP = "KEY_MWHEELUP",
+    MWHEELDOWN = "KEY_MWHEELDOWN",
+    WHEELUP = "KEY_MWHEELUP",
+    WHEELDOWN = "KEY_MWHEELDOWN",
+    MOUSEWHEELUP = "KEY_MWHEELUP",
+    MOUSEWHEELDOWN = "KEY_MWHEELDOWN",
+    SPACEBAR = "KEY_SPACE",
+}
+
+local ATTACK_COMMANDS = {
+    ["mc_attack"] = true,
+    ["mc_attackmove"] = true,
+    ["attack"] = true,
+    ["attackmove"] = true,
+    ["attack_move"] = true,
+    ["+attack"] = true,
+    ["+attack2"] = true,
+    ["+attackmove"] = true,
+    ["dota_attack"] = true,
+    ["dota_force_attack"] = true,
+    ["force_attack"] = true,
+    ["+force_attack"] = true,
+}
+
+local function read_file(path)
+    local ok, data = pcall(function()
+        local file = io.open(path, "r")
+        if not file then
+            return nil
+        end
+
+        local content = file:read("*a")
+        file:close()
+        return content
+    end)
+
+    if not ok then
+        return nil
     end
 
-    if state.use_right_click == use_right and state.attack_buttons ~= nil then
+    return data
+end
+
+local function resolve_button_code_from_name(name)
+    if not Enum or not Enum.ButtonCode then
+        return nil
+    end
+
+    if type(name) ~= "string" then
+        return nil
+    end
+
+    local trimmed = name:match("^%s*(.-)%s*$")
+    if not trimmed or trimmed == "" then
+        return nil
+    end
+
+    local alias = SPECIAL_KEY_ALIASES[trimmed]
+    if alias then
+        return detect_button({ alias })
+    end
+
+    local normalized = trimmed:upper()
+
+    alias = SPECIAL_KEY_ALIASES[normalized]
+    if alias then
+        local code = detect_button({ alias })
+        if code then
+            return code
+        end
+    end
+
+    local candidates = {}
+
+    local alias_name = KEY_NAME_ALIASES[normalized]
+    if alias_name then
+        table.insert(candidates, alias_name)
+    end
+
+    table.insert(candidates, normalized)
+
+    if not normalized:find("^KEY_") then
+        table.insert(candidates, "KEY_" .. normalized)
+    end
+
+    if normalized:match("^NUMPAD") then
+        table.insert(candidates, "KEY_PAD_" .. normalized:sub(7))
+    end
+
+    if normalized:match("^KP_") then
+        table.insert(candidates, "KEY_PAD_" .. normalized:sub(4))
+    end
+
+    if normalized:match("^PAD_") then
+        table.insert(candidates, "KEY_" .. normalized)
+    end
+
+    if #normalized == 1 then
+        table.insert(candidates, "KEY_" .. normalized)
+    end
+
+    if normalized:match("^MOUSE") then
+        table.insert(candidates, "KEY_" .. normalized)
+        table.insert(candidates, normalized:gsub("^MOUSE", "MOUSE_"))
+    end
+
+    return detect_button(candidates)
+end
+
+local function is_attack_command(command)
+    if type(command) ~= "string" then
+        return false
+    end
+
+    local normalized = command:lower():gsub("%s+", "")
+    return ATTACK_COMMANDS[normalized] or false
+end
+
+local function gather_attack_key_names(text, output)
+    if not text then
         return
     end
 
+    for key, command in text:gmatch('bind%s+"([^"]+)"%s+"([^"]+)"') do
+        if is_attack_command(command) then
+            output[key] = true
+        end
+    end
+
+    for key, command in text:gmatch('"([^"]+)"%s+"([^"]+)"') do
+        if is_attack_command(command) then
+            output[key] = true
+        end
+    end
+end
+
+local function collect_attack_key_codes()
+    local names = {}
+
+    for _, path in ipairs(KEYBIND_FILES) do
+        gather_attack_key_names(read_file(path), names)
+    end
+
+    local codes = {}
+    local seen = {}
+
+    for key in pairs(names) do
+        local code = resolve_button_code_from_name(key)
+        if code and not seen[code] then
+            table.insert(codes, code)
+            seen[code] = true
+        end
+    end
+
+    table.sort(codes, function(a, b)
+        return a < b
+    end)
+
+    return codes
+end
+
+local function refresh_attack_binding(force)
+    local now = safe_call(GameRules and GameRules.GetGameTime)
+    if not force and now and state.next_bind_refresh and now < state.next_bind_refresh then
+        return
+    end
+
+    if now then
+        state.next_bind_refresh = now + 2.0
+    else
+        state.next_bind_refresh = nil
+    end
+
+    local use_right = read_force_right_click()
     state.use_right_click = use_right
-    state.attack_buttons = {}
+
+    local attack_buttons = {}
+    local seen = {}
+
+    local function add_button(code)
+        if not code or seen[code] then
+            return
+        end
+
+        table.insert(attack_buttons, code)
+        seen[code] = true
+    end
+
+    if use_right == true then
+        add_button(RIGHT_MOUSE_BUTTON)
+    elseif use_right == false then
+        add_button(LEFT_MOUSE_BUTTON)
+    else
+        add_button(RIGHT_MOUSE_BUTTON)
+        add_button(LEFT_MOUSE_BUTTON)
+    end
+
+    local keyboard_codes = collect_attack_key_codes()
+    local added_keyboard = false
+
+    for _, code in ipairs(keyboard_codes) do
+        add_button(code)
+        added_keyboard = true
+    end
+
+    if not added_keyboard then
+        add_button(resolve_button_code_from_name("A") or resolve_button_code_from_name("KEY_A"))
+    end
+
+    if #attack_buttons == 0 then
+        add_button(RIGHT_MOUSE_BUTTON)
+        add_button(LEFT_MOUSE_BUTTON)
+    end
+
+    state.attack_buttons = attack_buttons
     state.button_down = {}
-
-    if use_right and RIGHT_MOUSE_BUTTON then
-        table.insert(state.attack_buttons, RIGHT_MOUSE_BUTTON)
-    elseif not use_right and LEFT_MOUSE_BUTTON then
-        table.insert(state.attack_buttons, LEFT_MOUSE_BUTTON)
-    end
-
-    if #state.attack_buttons == 0 then
-        if RIGHT_MOUSE_BUTTON then
-            table.insert(state.attack_buttons, RIGHT_MOUSE_BUTTON)
-        end
-        if LEFT_MOUSE_BUTTON then
-            table.insert(state.attack_buttons, LEFT_MOUSE_BUTTON)
-        end
-    end
 end
 
 local function get_cursor_position(hero_pos)
