@@ -1,120 +1,29 @@
 ---@diagnostic disable: undefined-global
 
 --[[
-    Umbrella helper that double-clicks the currently selected hero portrait.
-    Whenever the local player has a controllable hero selected and the camera
-    is not locked on it, the script double-clicks the portrait to trigger the
-    in-game camera lock behaviour.  After each attempt the script waits for a
-    short cooldown before checking again.
+    Umbrella helper that converts right mouse button presses into attack-move
+    orders near the local hero.  Whenever the player issues a right click the
+    script finds the controlled hero and queues a short-range force attack so
+    the unit keeps fighting around its current position.
 --]]
 
-local auto_lock = {}
+local force_attack = {}
 
-local DOUBLE_CLICK_INTERVAL = 0.05
-local CHECK_COOLDOWN = 2.0
-
-local state = {
-    player = nil,
-    pending_target = nil,
-    pending_click_stage = 0,
-    next_click_time = 0,
-    next_check_time = 0,
-    locked_target = nil,
-}
-
-local function reset_state()
-    state.pending_target = nil
-    state.pending_click_stage = 0
-    state.next_click_time = 0
-    state.next_check_time = 0
-    state.locked_target = nil
-end
-
-local function refresh_player()
-    local player = state.player
-
-    if player and Players.Contains(player) then
-        return player
-    end
-
-    player = Players.GetLocal()
-    state.player = player
-    return player
-end
-
-local function is_valid_target(unit)
-    if not unit or not Entity.IsHero(unit) then
-        return false
-    end
-
-    if Entity.IsDormant(unit) or not Entity.IsAlive(unit) then
-        return false
-    end
-
-    return true
-end
-
-local function first_selected_hero(player)
-    local selected_units = Player.GetSelectedUnits(player)
-
-    if not selected_units then
+local function detect_right_button()
+    if not Enum or not Enum.ButtonCode then
         return nil
     end
 
-    for _, unit in ipairs(selected_units) do
-        if is_valid_target(unit) then
-            return unit
-        end
-    end
-
-    return nil
-end
-
-local function safe_call(fn, ...)
-    if type(fn) ~= "function" then
-        return false, nil
-    end
-
-    local ok, result = pcall(fn, ...)
-    if not ok then
-        return false, nil
-    end
-
-    return true, result
-end
-
-local function current_camera_target(player)
-    local getters = {
-        function()
-            local ok, value = safe_call(Players and Players.GetCameraTarget, player)
-            if ok then
-                return value
-            end
-        end,
-        function()
-            local ok, value = safe_call(Player and Player.GetCameraTarget, player)
-            if ok then
-                return value
-            end
-        end,
-        function()
-            local ok, value = safe_call(Engine and Engine.GetCameraTarget, player)
-            if ok then
-                return value
-            end
-        end,
-        function()
-            if type(Camera) == "table" then
-                local ok, value = safe_call(Camera.GetTarget, player)
-                if ok then
-                    return value
-                end
-            end
-        end,
+    local candidates = {
+        "BUTTON_CODE_MOUSE_RIGHT",
+        "MOUSE_RIGHT",
+        "BUTTON_CODE_MOUSE_2",
+        "MOUSE2",
+        "KEY_RBUTTON",
     }
 
-    for _, getter in ipairs(getters) do
-        local value = getter()
+    for _, name in ipairs(candidates) do
+        local value = Enum.ButtonCode[name]
         if value then
             return value
         end
@@ -123,182 +32,158 @@ local function current_camera_target(player)
     return nil
 end
 
-local function is_camera_locked(player, hero)
-    if not hero then
+local RIGHT_MOUSE_BUTTON = detect_right_button()
+local ATTACK_RADIUS = 150.0
+
+local state = {
+    player = nil,
+    hero = nil,
+    right_down = false,
+}
+
+local function safe_call(fn, ...)
+    if type(fn) ~= "function" then
+        return nil
+    end
+
+    local ok, result = pcall(fn, ...)
+    if not ok then
+        return nil
+    end
+
+    return result
+end
+
+local function reset_state()
+    state.player = nil
+    state.hero = nil
+    state.right_down = false
+end
+
+local function refresh_handles()
+    local player = state.player
+    if not player or not safe_call(Players and Players.Contains, player) then
+        player = safe_call(Players and Players.GetLocal)
+        state.player = player
+    end
+
+    local hero = state.hero
+    if not hero or not Entity.IsAlive(hero) then
+        hero = safe_call(Heroes and Heroes.GetLocal)
+        state.hero = hero
+    end
+
+    return state.player ~= nil and state.hero ~= nil
+end
+
+local function random_offset(radius)
+    local angle = math.random() * math.pi * 2
+    local distance = math.random() * radius
+    return Vector(math.cos(angle) * distance, math.sin(angle) * distance, 0)
+end
+
+local function issue_attack_move()
+    if not state.hero or not state.player then
+        return
+    end
+
+    local hero_pos = Entity.GetAbsOrigin(state.hero)
+    if not hero_pos then
+        return
+    end
+
+    local offset = random_offset(ATTACK_RADIUS)
+    local target_pos = hero_pos
+    local ok, sum = pcall(function()
+        return hero_pos + offset
+    end)
+    if ok and sum then
+        target_pos = sum
+    end
+
+    if safe_call(Player and Player.PrepareUnitOrders, state.player,
+        Enum.UnitOrder.DOTA_UNIT_ORDER_ATTACK_MOVE,
+        nil,
+        target_pos,
+        nil,
+        Enum.PlayerOrderIssuer.DOTA_ORDER_ISSUER_HERO_ONLY,
+        state.hero,
+        false,
+        false,
+        false,
+        true,
+        "force_attack_rmb"
+    ) then
+        return
+    end
+
+    safe_call(Player and Player.AttackMove, state.player, state.hero, target_pos, false, false, true, "force_attack_rmb")
+end
+
+local function is_right_click()
+    if not RIGHT_MOUSE_BUTTON then
         return false
     end
 
-    local checks = {
-        function()
-            local ok, value = safe_call(Players and Players.IsCameraLockedOnHero, player, hero)
-            if ok then
-                return value
-            end
-        end,
-        function()
-            local ok, value = safe_call(Player and Player.IsCameraLockedOnHero, player, hero)
-            if ok then
-                return value
-            end
-        end,
-        function()
-            local ok, value = safe_call(Engine and Engine.IsCameraLockedOnHero, hero)
-            if ok then
-                return value
-            end
-        end,
-    }
-
-    for _, check in ipairs(checks) do
-        local result = check()
-        if result ~= nil then
-            return result
-        end
+    local pressed = safe_call(Input and Input.IsKeyDownOnce, RIGHT_MOUSE_BUTTON)
+    if pressed ~= nil then
+        return pressed
     end
 
-    local camera_target = current_camera_target(player)
-    if camera_target then
-        return camera_target == hero
-    end
-
-    return state.locked_target == hero
-end
-
-local function single_portrait_click(player, hero)
-    local attempts = {
-        function()
-            local ok, result = safe_call(Players and Players.ClickHeroPortrait, player, hero)
-            if ok then
-                return result ~= false, false
+    pressed = safe_call(Input and Input.IsKeyDown, RIGHT_MOUSE_BUTTON)
+    if pressed ~= nil then
+        if pressed then
+            if not state.right_down then
+                state.right_down = true
+                return true
             end
-        end,
-        function()
-            local ok, result = safe_call(Player and Player.ClickHeroPortrait, player, hero)
-            if ok then
-                return result ~= false, false
-            end
-        end,
-        function()
-            local ok, result = safe_call(Players and Players.DoubleClickPortrait, player, hero)
-            if ok then
-                return result ~= false, true
-            end
-        end,
-        function()
-            local ok, result = safe_call(Player and Player.DoubleClickPortrait, player, hero)
-            if ok then
-                return result ~= false, true
-            end
-        end,
-        function()
-            if type(Engine) == "table" and type(Engine.ExecuteCommand) == "function" then
-                local success = safe_call(Engine.ExecuteCommand, "dota_camera_lock 1")
-                return success, true
-            end
-        end,
-    }
-
-    for _, attempt in ipairs(attempts) do
-        local success, completed = attempt()
-        if success ~= nil then
-            if success then
-                return true, completed or false
-            end
-        end
-    end
-
-    return false, false
-end
-
-local function start_double_click(hero, current_time)
-    state.pending_target = hero
-    state.pending_click_stage = 0
-    state.next_click_time = current_time
-end
-
-local function process_double_click(player, current_time)
-    if not state.pending_target then
-        return false
-    end
-
-    if current_time < state.next_click_time then
-        return true
-    end
-
-    local hero = state.pending_target
-    if not is_valid_target(hero) then
-        state.pending_target = nil
-        state.pending_click_stage = 0
-        return false
-    end
-
-    local success, completed = single_portrait_click(player, hero)
-    if success then
-        state.pending_click_stage = state.pending_click_stage + 1
-        if completed or state.pending_click_stage >= 2 then
-            state.locked_target = hero
-            state.pending_target = nil
-            state.pending_click_stage = 0
-            state.next_check_time = current_time + CHECK_COOLDOWN
-            return false
         else
-            state.next_click_time = current_time + DOUBLE_CLICK_INTERVAL
-            return true
+            state.right_down = false
         end
-    else
-        state.pending_target = nil
-        state.pending_click_stage = 0
-        state.next_check_time = current_time + CHECK_COOLDOWN
         return false
     end
+
+    pressed = safe_call(Input and Input.IsButtonDownOnce, RIGHT_MOUSE_BUTTON)
+    if pressed ~= nil then
+        return pressed
+    end
+
+    pressed = safe_call(Input and Input.IsButtonDown, RIGHT_MOUSE_BUTTON)
+    if pressed ~= nil then
+        if pressed then
+            if not state.right_down then
+                state.right_down = true
+                return true
+            end
+        else
+            state.right_down = false
+        end
+    end
+
+    return false
 end
 
-function auto_lock.OnUpdate()
+function force_attack.OnUpdate()
     if not Engine.IsInGame() then
         reset_state()
-        state.player = nil
         return
     end
 
-    if Input.IsInputCaptured() then
+    if safe_call(Input and Input.IsInputCaptured) then
         return
     end
 
-    local player = refresh_player()
-    if not player then
-        reset_state()
+    if not refresh_handles() then
         return
     end
 
-    local current_time = GameRules.GetGameTime()
-
-    if process_double_click(player, current_time) then
+    if not Entity.IsAlive(state.hero) then
         return
     end
 
-    local camera_target = current_camera_target(player)
-    if camera_target and camera_target ~= state.locked_target then
-        state.locked_target = camera_target
-    elseif not camera_target and not state.pending_target then
-        state.locked_target = nil
-    end
-
-    if current_time < state.next_check_time then
-        return
-    end
-
-    local hero = first_selected_hero(player)
-    if not hero then
-        state.locked_target = nil
-        return
-    end
-
-    if not is_camera_locked(player, hero) then
-        start_double_click(hero, current_time)
-    else
-        state.locked_target = hero
-        state.next_check_time = current_time + CHECK_COOLDOWN
+    if is_right_click() then
+        issue_attack_move()
     end
 end
 
-return auto_lock
+return force_attack
