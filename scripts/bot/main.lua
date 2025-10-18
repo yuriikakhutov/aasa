@@ -2,10 +2,11 @@
 -- Main entry point wiring all subsystems together.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 local Blackboard = require("scripts.bot.core.blackboard")
 local Sensors = require("scripts.bot.core.sensors")
 local Memory = require("scripts.bot.core.memory")
+local ProbPos = require("scripts.bot.core.probpos")
 local DangerMap = require("scripts.bot.core.dangermap")
 local Macro = require("scripts.bot.core.macro")
 local Pathing = require("scripts.bot.core.pathing")
@@ -15,6 +16,10 @@ local Abilities = require("scripts.bot.core.abilities")
 local Items = require("scripts.bot.core.items")
 local Economy = require("scripts.bot.core.economy")
 local Team = require("scripts.bot.core.team")
+local OrderCoalescer = require("scripts.bot.core.order_coalescer")
+local AntiStuck = require("scripts.bot.core.anti_stuck")
+local Profiler = require("scripts.bot.core.profiler")
+local Validators = require("scripts.bot.core.validators")
 local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local Bot = {}
@@ -22,10 +27,14 @@ local Bot = {}
 local state = {
     bb = Blackboard.new(),
     memory = Memory.new(),
+    probpos = ProbPos.new(),
     danger = DangerMap.new(),
     lastHighTick = -math.huge,
     lastCombatTick = -math.huge,
     heroInitialised = false,
+    coalescer = OrderCoalescer.new(),
+    antiStuck = AntiStuck.new(),
+    profiler = Profiler.new(),
 }
 
 local function ensureHeroModule()
@@ -46,65 +55,24 @@ local function ensureHeroModule()
     state.heroInitialised = true
 end
 
-local function canIssue(orderType, signature)
-    local orders = state.bb.orders
-    local now = os.clock()
-    local record = orders[orderType]
-    if record and now - (record.time or -math.huge) < state.bb.settings.orderCooldown then
-        return false
-    end
-    if record and record.signature == signature and now - (record.time or -math.huge) < 0.6 then
-        return false
-    end
-    return true
-end
-
-local function markIssued(orderType, signature)
-    state.bb.orders[orderType] = {
-        time = os.clock(),
-        signature = signature,
-    }
-end
-
-local function issueMove(pos)
-    if not pos then
+local function queueMovementOrders(orders)
+    if orders.stopAttacking then
+        state.coalescer:queue("move", "stop", UZ.stop)
         return
     end
-    local signature = string.format("%.1f:%.1f", pos.x or 0, pos.y or 0)
-    if not canIssue("lastMove", signature) then
-        return
+    if orders.attackTarget then
+        local signature = tostring(orders.attackTarget.id or orders.attackTarget.handle or orders.attackTarget.name)
+        state.coalescer:queue("attack", signature, UZ.attack, orders.attackTarget)
     end
-    local ok, result = pcall(UZ.move, pos)
-    if ok and result then
-        markIssued("lastMove", signature)
-    end
-end
-
-local function issueAttack(target)
-    if not target then
-        return
-    end
-    local signature = tostring(target.id or target.handle or target.name)
-    if not canIssue("lastAttack", signature) then
-        return
-    end
-    local ok, result = pcall(UZ.attack, target)
-    if ok and result then
-        markIssued("lastAttack", signature)
-    end
-end
-
-local function issueStop()
-    if not canIssue("lastMove", "stop") then
-        return
-    end
-    local ok, result = pcall(UZ.stop)
-    if ok and result then
-        markIssued("lastMove", "stop")
+    if orders.move then
+        local pos = orders.move
+        local signature = string.format("%.1f:%.1f", pos.x or 0, pos.y or 0)
+        state.coalescer:queue("move", signature, UZ.move, pos)
     end
 end
 
 local function highTick(now)
+    local tickStart = os.clock()
     state.bb.sensors = Sensors.capture()
     if not state.bb.sensors.valid then
         return
@@ -113,6 +81,9 @@ local function highTick(now)
 
     state.memory:updateFromSensors(state.bb.sensors)
     state.bb.memory = state.memory
+
+    local estimates = state.probpos:update(state.memory, state.bb.sensors)
+    state.bb.probpos = estimates
 
     state.danger:decay()
     state.danger:ingest(state.bb.sensors, state.memory)
@@ -123,38 +94,48 @@ local function highTick(now)
     Economy.decide(state.bb)
 
     state.bb.teamRole = state.bb.teamRole or Team.assignRole(state.bb.sensors)
+    state.antiStuck:record(state.bb.sensors.time or now, state.bb.sensors.pos)
+    state.bb.antiStuck.isStuck = state.antiStuck:isStuck()
+
+    Validators.assert_timer_granularity(state.bb.settings)
+    local duration = os.clock() - tickStart
+    state.profiler:recordTick("high", duration)
 end
 
 local function combatTick(now)
     if not state.bb.sensors or not state.bb.sensors.valid then
         return
     end
+    local tickStart = os.clock()
 
     state.bb.tactics = Tactics.plan(state.bb)
     local orders = Micro.execute(state.bb)
     state.bb.micro = orders
 
-    local casted = Abilities.execute(state.bb, orders)
-    if not casted then
-        Items.execute(state.bb, orders)
+    if state.bb.heroModule and state.bb.heroModule.beforeAbility then
+        state.bb.heroModule.beforeAbility(state.bb)
     end
 
-    if orders.stopAttacking then
-        issueStop()
-        return
+    local abilityQueued = Abilities.execute(state.bb, state.coalescer, UZ)
+    if not abilityQueued then
+        Items.execute(state.bb, state.coalescer, UZ)
     end
 
-    if orders.attackTarget then
-        issueAttack(orders.attackTarget)
-    end
+    queueMovementOrders(orders)
 
-    if orders.move then
-        issueMove(orders.move)
-    end
+    local issued = state.coalescer:flush()
+    state.bb:appendOrderHistory(issued)
+    state.profiler:recordOrders(issued)
+    state.profiler:recordTick("combat", os.clock() - tickStart)
+    state.profiler:flushIfNeeded()
+
+    state.bb.orders = state.coalescer.lastIssued
+    Validators.assert_no_spam_orders(state.bb.orderHistory)
 end
 
 function Bot.Init()
     Log.info("UCZone bot initialised")
+    Validators.assert_no_globals()
 end
 
 function Bot.Tick()

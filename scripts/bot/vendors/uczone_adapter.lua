@@ -4,7 +4,7 @@
 -- multiple method names to support both UCZone and Umbrella conventions.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 
 local ok, backend = pcall(require, "UCZone")
 if not ok then
@@ -19,6 +19,19 @@ end
 
 local UZ = {}
 
+local errorBudget = {}
+local function shouldReport(name)
+    local budget = errorBudget[name] or { time = -math.huge, count = 0 }
+    local now = os.clock()
+    if now - budget.time > 1.5 then
+        budget.time = now
+        budget.count = 0
+    end
+    budget.count = budget.count + 1
+    errorBudget[name] = budget
+    return budget.count <= 3
+end
+
 local function callBackend(candidates, ...)
     for _, name in ipairs(candidates) do
         local fn = backend[name]
@@ -26,10 +39,10 @@ local function callBackend(candidates, ...)
             local okCall, result = pcall(fn, ...)
             if okCall then
                 return result
-            else
-                Log.error("Backend call failed: " .. tostring(name) .. " -> " .. tostring(result))
-                return nil
+            elseif shouldReport(name) then
+                Log.error("Backend call failed: %s -> %s", tostring(name), tostring(result))
             end
+            return nil
         end
     end
     return nil
@@ -42,7 +55,9 @@ local function passthrough(name, ...)
     end
     local okCall, result = pcall(fn, ...)
     if not okCall then
-        Log.error("Backend call failed: " .. tostring(name) .. " -> " .. tostring(result))
+        if shouldReport(name) then
+            Log.error("Backend call failed: %s -> %s", tostring(name), tostring(result))
+        end
         return nil
     end
     return result
@@ -59,6 +74,18 @@ end
 
 function UZ.team()
     return callBackend({ "GetTeamName", "Team" }) or "radiant"
+end
+
+function UZ.myPos()
+    return callBackend({ "MyPosition", "GetPosition" }) or { x = 0, y = 0, z = 0 }
+end
+
+function UZ.fountainPos(team)
+    return callBackend({ "FountainPosition", "GetFountain" }, team)
+end
+
+function UZ.safeRetreatPoint()
+    return callBackend({ "SafeRetreat", "GetSafeRetreatPoint" })
 end
 
 -- Unit queries
@@ -86,15 +113,15 @@ function UZ.towers(team)
     return callBackend({ "Towers", "GetTowers" }, team) or {}
 end
 
-function UZ.roshan()
-    return callBackend({ "Roshan", "GetRoshan" })
-end
-
 function UZ.runes()
     return callBackend({ "Runes", "GetRunes" }) or {}
 end
 
--- Navigation / orders
+function UZ.roshan()
+    return callBackend({ "Roshan", "GetRoshan" })
+end
+
+-- Orders
 function UZ.move(pos)
     return callBackend({ "OrderMove", "MoveTo" }, pos) or false
 end
@@ -163,19 +190,7 @@ function UZ.distance(a, b)
     return 0
 end
 
-function UZ.myPos()
-    return callBackend({ "MyPosition", "GetPosition" }) or { x = 0, y = 0, z = 0 }
-end
-
-function UZ.fountainPos(team)
-    return callBackend({ "FountainPosition", "GetFountain" }, team)
-end
-
-function UZ.safeRetreatPoint()
-    return callBackend({ "SafeRetreat", "GetSafeRetreatPoint" })
-end
-
--- Misc
+-- Comms
 function UZ.ping(pos, msg)
     return callBackend({ "Ping", "SendPing" }, pos, msg)
 end

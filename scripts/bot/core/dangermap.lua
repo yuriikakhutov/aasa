@@ -3,7 +3,6 @@
 -- enemy tower ranges and last-seen enemy positions.
 ---
 
-local Log = require("scripts.bot.core.log")
 local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local DangerMap = {}

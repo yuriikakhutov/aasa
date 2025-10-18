@@ -2,8 +2,7 @@
 -- Rubick specific behaviour: manages stolen spells and smart casting.
 ---
 
-local Log = require("scripts.bot.core.log")
-local UZ = require("scripts.bot.vendors.uczone_adapter")
+local Log = require("scripts.bot.core.logger")
 
 local Rubick = {}
 
@@ -25,8 +24,8 @@ local function normaliseName(name)
 end
 
 local function isBlink(ability)
-    local name = normaliseName(ability.name)
-    return string.find(name, "blink") ~= nil
+    local name = normaliseName(ability and ability.name)
+    return name ~= "" and string.find(name, "blink") ~= nil
 end
 
 local function updateStolen(memory, sensors)
@@ -50,24 +49,25 @@ end
 local function chooseAbility(memory, sensors)
     local bestAbility
     local bestScore = 0
-    local hasLongRangeSpell = false
+    local longestRange = 0
     for _, ability in ipairs(sensors.abilities or {}) do
         if ability.isStolen or (ability.name and ability.name ~= "rubick_spell_steal" and ability.owner ~= sensors.self) then
             local entry = memory.stolenAbilities and memory.stolenAbilities[ability.name]
             local ready = (ability.cd or 0) <= 0.1 and (not entry or sensors.time >= (entry.cdReadyAt or 0) - 0.1)
             if ready then
-                local score = HIGH_VALUE[normaliseName(ability.name)] or (ability.castRange or 600) / 1000
+                local range = ability.castRange or 0
+                if range > longestRange then
+                    longestRange = range
+                end
+                local score = HIGH_VALUE[normaliseName(ability.name)] or range / 1000
                 if score > bestScore then
                     bestScore = score
                     bestAbility = ability
                 end
-                if (ability.castRange or 0) > 1000 then
-                    hasLongRangeSpell = true
-                end
             end
         end
     end
-    return bestAbility, hasLongRangeSpell
+    return bestAbility, longestRange
 end
 
 local function pickPayload(ability, tactics, orders)
@@ -88,7 +88,12 @@ function Rubick.init(bb)
     bb.memory.stolenAbilities = bb.memory.stolenAbilities or {}
 end
 
-function Rubick.selectAbility(bb, orders)
+function Rubick.beforeAbility(bb)
+    bb.validators = bb.validators or {}
+    bb.validators.rubick = bb.validators.rubick or {}
+end
+
+function Rubick.selectAbility(bb)
     local sensors = bb.sensors or {}
     if not sensors.valid then
         return nil
@@ -96,16 +101,33 @@ function Rubick.selectAbility(bb, orders)
     local memory = bb.memory
     updateStolen(memory, sensors)
 
-    local ability, hasLongRangeSpell = chooseAbility(memory, sensors)
+    local ability, longestRange = chooseAbility(memory, sensors)
     if not ability then
         return nil
     end
 
-    if isBlink(ability) and hasLongRangeSpell then
+    local abilityRange = ability.castRange or 0
+    local blink = isBlink(ability)
+    local danger = 0
+    if bb.danger and bb.danger.scorePosition and sensors.pos then
+        danger = bb.danger:scorePosition(sensors.pos)
+    end
+
+    bb.validators = bb.validators or {}
+    bb.validators.rubick = bb.validators.rubick or {}
+    table.insert(bb.validators.rubick, {
+        usedBlink = blink,
+        safeCastRange = longestRange,
+        blinkRange = abilityRange,
+        dangerScore = danger,
+    })
+
+    if blink and longestRange > abilityRange then
+        Log.debug("Skipping blink due to longer range alternative")
         return nil
     end
 
-    local payload = pickPayload(ability, bb.tactics or {}, orders or {})
+    local payload = pickPayload(ability, bb.tactics or {}, bb.micro or {})
     return ability, payload
 end
 

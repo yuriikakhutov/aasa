@@ -2,7 +2,7 @@
 -- Team coordination primitives for multi-bot communication.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 local Team = {}
 
 function Team.assignRole(sensors)

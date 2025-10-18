@@ -1,9 +1,7 @@
 ---
--- Item usage handler for active items with safety checks.
+-- Item usage handler for active items with safety checks routed through the
+-- order coalescer.
 ---
-
-local Log = require("scripts.bot.core.log")
-local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local Items = {}
 
@@ -17,37 +15,43 @@ local function isReady(item, selfUnit)
     if item.mana and selfUnit and selfUnit.mana and item.mana > selfUnit.mana then
         return false
     end
+    if item.isPassive then
+        return false
+    end
     return true
 end
 
-local function use(item, payload)
-    local ok, result = pcall(UZ.useItem, item.name, payload)
-    if not ok then
-        Log.error("Failed to use item " .. tostring(item.name) .. ": " .. tostring(result))
-        return false
-    end
-    return result
+local function itemSignature(item)
+    return tostring(item.name or item.id)
 end
 
-function Items.execute(bb, orders)
+local function determinePayload(item, tactics, orders)
+    if item.behavior == "UNIT_TARGET" then
+        return tactics.focus or orders.attackTarget
+    elseif item.behavior == "POINT" then
+        local focus = tactics.focus or orders.attackTarget
+        return (focus and focus.pos) or orders.move
+    end
+    return nil
+end
+
+function Items.execute(bb, coalescer, UZ)
     local sensors = bb.sensors or {}
     local items = sensors.items or {}
     local tactics = bb.tactics or {}
+    local issued = false
 
     for _, item in ipairs(items) do
-        if not item.isPassive and isReady(item, sensors.self) then
-            local payload
-            if item.behavior == "UNIT_TARGET" then
-                payload = tactics.focus or orders.attackTarget
-            elseif item.behavior == "POINT" then
-                payload = (tactics.focus and tactics.focus.pos) or orders.move
-            end
-            if use(item, payload) then
-                return true
+        if isReady(item, sensors.self) then
+            local payload = determinePayload(item, tactics, bb.micro or {})
+            if coalescer:queue("item", itemSignature(item), UZ.useItem, item.name, payload) then
+                issued = true
+                break
             end
         end
     end
-    return false
+
+    return issued
 end
 
 return Items

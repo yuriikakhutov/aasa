@@ -2,8 +2,7 @@
 -- Micro controller: translates tactical intent into specific orders.
 ---
 
-local Log = require("scripts.bot.core.log")
-local UZ = require("scripts.bot.vendors.uczone_adapter")
+local Log = require("scripts.bot.core.logger")
 
 local Micro = {}
 
@@ -21,7 +20,7 @@ function Micro.execute(bb)
     local orders = {}
 
     if tactics.mode == "disengage" then
-        orders.move = tactics.retreatPoint or UZ.safeRetreatPoint()
+        orders.move = tactics.retreatPoint or sensors.fountainPos
         orders.stopAttacking = true
         return orders
     end
@@ -37,6 +36,14 @@ function Micro.execute(bb)
         orders.move = path.waypoints[math.min(2, #path.waypoints)]
     elseif focus and focus.pos then
         orders.move = focus.pos
+    else
+        orders.move = bb.macro and bb.macro.destination
+    end
+
+    if bb.antiStuck and bb.antiStuck.isStuck and sensors.pos then
+        Log.warn("Anti-stuck triggered, forcing stop order")
+        orders.stopAttacking = true
+        orders.move = sensors.pos
     end
 
     return orders

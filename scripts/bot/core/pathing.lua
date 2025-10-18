@@ -2,7 +2,7 @@
 -- Pathing: requests navigation paths and filters against danger map.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local Pathing = {}

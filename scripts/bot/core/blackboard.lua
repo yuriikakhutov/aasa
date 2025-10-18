@@ -11,6 +11,7 @@ function Blackboard.new()
         sensors = {},
         memory = {},
         danger = {},
+        probpos = {},
         macro = {},
         path = {
             waypoints = {},
@@ -18,10 +19,12 @@ function Blackboard.new()
         },
         tactics = {},
         micro = {},
-        orders = {
-            lastMove = { time = -math.huge, signature = nil },
-            lastAttack = { time = -math.huge, signature = nil },
-            lastCast = { time = -math.huge, signature = nil },
+        orders = {},
+        orderHistory = {},
+        probables = {},
+        antiStuck = { isStuck = false },
+        validators = {
+            rubick = {},
         },
         settings = {
             tickHigh = 0.15,
@@ -33,6 +36,12 @@ end
 
 function Blackboard:update(section, data)
     self[section] = data
+end
+
+function Blackboard:appendOrderHistory(entries)
+    for _, entry in ipairs(entries or {}) do
+        table.insert(self.orderHistory, entry)
+    end
 end
 
 return Blackboard

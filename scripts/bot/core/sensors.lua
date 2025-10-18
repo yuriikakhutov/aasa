@@ -2,7 +2,7 @@
 -- Sensors: grabs the latest snapshot from UCZone and normalises it.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local Sensors = {}
@@ -35,11 +35,14 @@ function Sensors.capture()
     local runes = safeCall("runes") or {}
     local towers = safeCall("towers") or {}
 
+    local team = safeCall("team") or "radiant"
+    local fountain = safeCall("fountainPos", team)
+
     return {
         valid = true,
         self = selfUnit,
         time = safeCall("time") or 0,
-        team = safeCall("team") or "radiant",
+        team = team,
         pos = safeCall("myPos") or { x = 0, y = 0 },
         enemies = enemies,
         allies = allies,
@@ -52,6 +55,7 @@ function Sensors.capture()
         abilities = safeCall("abilities") or {},
         items = safeCall("items") or {},
         hasAghanim = safeCall("hasAghanim") or false,
+        fountainPos = fountain,
     }
 end
 

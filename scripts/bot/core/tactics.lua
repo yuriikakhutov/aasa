@@ -2,7 +2,6 @@
 -- Tactics: short term combat planning given current surroundings.
 ---
 
-local Log = require("scripts.bot.core.log")
 local UZ = require("scripts.bot.vendors.uczone_adapter")
 
 local Tactics = {}

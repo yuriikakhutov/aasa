@@ -2,7 +2,7 @@
 -- Macro planner: chooses the primary objective based on utility weights.
 ---
 
-local Log = require("scripts.bot.core.log")
+local Log = require("scripts.bot.core.logger")
 local Utility = require("scripts.bot.core.utility")
 local Objectives = require("scripts.bot.core.objectives")
 local UZ = require("scripts.bot.vendors.uczone_adapter")

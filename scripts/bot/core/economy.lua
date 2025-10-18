@@ -2,9 +2,6 @@
 -- Economy heuristics: farming, stacking, last hitting decisions.
 ---
 
-local Log = require("scripts.bot.core.log")
-local UZ = require("scripts.bot.vendors.uczone_adapter")
-
 local Economy = {}
 
 function Economy.decide(bb)

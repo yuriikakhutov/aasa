@@ -40,15 +40,24 @@ function Memory:decay(now)
 end
 
 function Memory:updateEnemies(now, enemyList)
+    local observed = {}
     for _, enemy in ipairs(enemyList or {}) do
         local id = unitId(enemy)
+        observed[id] = true
+        local existing = self.enemies[id] or {}
         self.enemies[id] = {
             time = now,
-            position = enemy.pos or enemy.location or enemy.origin,
+            position = enemy.pos or enemy.location or enemy.origin or existing.position,
             health = enemy.health,
             isVisible = true,
             unit = enemy,
+            lastKnownSpeed = enemy.movespeed or existing.lastKnownSpeed,
         }
+    end
+    for id, entry in pairs(self.enemies) do
+        if not observed[id] then
+            entry.isVisible = false
+        end
     end
 end
 
